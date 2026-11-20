@@ -1,0 +1,6 @@
+{
+  "name": "Ludo for M",
+  "description": "Playful multiplayer Ludo board game with pass-and-play, 3D animated dice, sound effects, and classic Ludo rules.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

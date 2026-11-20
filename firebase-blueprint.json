@@ -1,0 +1,363 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Private authenticated player profile and lifetime/weekly stats.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth UID matching the document ID."
+        },
+        "nickname": {
+          "type": "string",
+          "description": "Player display nickname (1-24 characters)."
+        },
+        "googleLinked": {
+          "type": "boolean",
+          "description": "True for Google-authenticated accounts eligible for the global leaderboard."
+        },
+        "wins": {
+          "type": "integer",
+          "description": "Total all-time wins."
+        },
+        "gamesPlayed": {
+          "type": "integer",
+          "description": "Total all-time games played."
+        },
+        "weeklyWins": {
+          "type": "integer",
+          "description": "Wins recorded in weekKey."
+        },
+        "weeklyGamesPlayed": {
+          "type": "integer",
+          "description": "Games played in weekKey."
+        },
+        "weekKey": {
+          "type": "string",
+          "description": "ISO year-week identifier (e.g. 2026-W47)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp() on creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp() on every write."
+        }
+      },
+      "required": [
+        "userId",
+        "nickname",
+        "googleLinked",
+        "wins",
+        "gamesPlayed",
+        "weeklyWins",
+        "weeklyGamesPlayed",
+        "weekKey",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "LeaderboardEntry": {
+      "title": "LeaderboardEntry",
+      "description": "Public non-PII global leaderboard stats for Google-authenticated players only.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth UID matching document ID."
+        },
+        "nickname": {
+          "type": "string",
+          "description": "Public display nickname (1-24 characters)."
+        },
+        "googleLinked": {
+          "type": "boolean",
+          "description": "Must be true so only Google accounts appear on the leaderboard."
+        },
+        "wins": {
+          "type": "integer",
+          "description": "All-time wins."
+        },
+        "gamesPlayed": {
+          "type": "integer",
+          "description": "All-time games played."
+        },
+        "weeklyWins": {
+          "type": "integer",
+          "description": "This week wins."
+        },
+        "weeklyGamesPlayed": {
+          "type": "integer",
+          "description": "This week games played."
+        },
+        "weekKey": {
+          "type": "string",
+          "description": "ISO year-week identifier (e.g. 2026-W47)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp() on creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp() on update."
+        }
+      },
+      "required": [
+        "userId",
+        "nickname",
+        "googleLinked",
+        "wins",
+        "gamesPlayed",
+        "weeklyWins",
+        "weeklyGamesPlayed",
+        "weekKey",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "OnlineRoom": {
+      "title": "OnlineRoom",
+      "description": "Shared real-time Ludo multiplayer room, lobby, matchmaking slot, synced authoritative game state, and rematch voting.",
+      "type": "object",
+      "properties": {
+        "roomCode": {
+          "type": "string",
+          "description": "6-character uppercase alphanumeric room code matching document ID."
+        },
+        "hostUid": {
+          "type": "string",
+          "description": "Current room host UID (transfers automatically if host leaves)."
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "CLASSIC",
+            "QUICK",
+            "MASTER",
+            "POWER_UP",
+            "TIMED",
+            "TEAMS_2V2",
+            "ONE_TOKEN_RACE",
+            "CHAOS",
+            "ELIMINATION"
+          ],
+          "description": "Selected Ludo game mode."
+        },
+        "targetPlayerCount": {
+          "type": "integer",
+          "description": "Target player count (2 to 4)."
+        },
+        "timedDurationSeconds": {
+          "type": "integer",
+          "description": "Match clock duration in seconds for Timed mode (300 or 600)."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["LOBBY", "PLAYING", "FINISHED", "CLOSED"],
+          "description": "Lifecycle phase of the multiplayer room."
+        },
+        "publicMatchmaking": {
+          "type": "boolean",
+          "description": "True when open for random matchmaking, false for private friend rooms."
+        },
+        "memberUids": {
+          "type": "array",
+          "description": "Bounded list (max 4) of joined human player UIDs."
+        },
+        "seats": {
+          "type": "array",
+          "description": "Bounded list (max 4) of seat maps containing color, uid, nickname, controllerType, botDifficulty, connected, botTakeover, consecutiveMisses, lastHeartbeatMs, rematchVoted."
+        },
+        "diceSeed": {
+          "type": "integer",
+          "description": "Deterministic room entropy seed combined with server turnStartedAt timestamp for fair dice rolls."
+        },
+        "rollSeq": {
+          "type": "integer",
+          "description": "Monotonic dice roll counter."
+        },
+        "turnSeq": {
+          "type": "integer",
+          "description": "Monotonic state transition sequence for synced animations and conflict prevention."
+        },
+        "lastActionType": {
+          "type": "string",
+          "description": "Last synced action type (NONE, START, ROLL, MOVE, SHIELD, DOUBLE_DICE, BOMB, TIMEOUT, BOT_TAKEOVER, REMATCH)."
+        },
+        "lastActionSummary": {
+          "type": "string",
+          "description": "Short human-readable summary of the last action."
+        },
+        "lastMovedColor": {
+          "type": "string",
+          "description": "Color of the token animated in the last move."
+        },
+        "lastMovedTokenId": {
+          "type": "integer",
+          "description": "Token ID (0-3) or -1 when no token moved."
+        },
+        "lastMovedFromProgress": {
+          "type": "integer",
+          "description": "Starting progress of the last animated token."
+        },
+        "lastMovedToProgress": {
+          "type": "integer",
+          "description": "Destination progress of the last animated token."
+        },
+        "gameStateMap": {
+          "type": "object",
+          "description": "Native Firestore map representing the authoritative Ludo GameState."
+        },
+        "turnStartedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the active turn start for synced 30s countdown and fair dice entropy."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp() on creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp() on every update."
+        }
+      },
+      "required": [
+        "roomCode",
+        "hostUid",
+        "mode",
+        "targetPlayerCount",
+        "timedDurationSeconds",
+        "status",
+        "publicMatchmaking",
+        "memberUids",
+        "seats",
+        "diceSeed",
+        "rollSeq",
+        "turnSeq",
+        "lastActionType",
+        "lastActionSummary",
+        "lastMovedColor",
+        "lastMovedTokenId",
+        "lastMovedFromProgress",
+        "lastMovedToProgress",
+        "gameStateMap",
+        "turnStartedAt",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "MatchHistoryRecord": {
+      "title": "MatchHistoryRecord",
+      "description": "Private per-user completed match history entry stored under /users/{userId}/matchHistory/{matchId}.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner Firebase Auth UID matching parent userId."
+        },
+        "mode": {
+          "type": "string",
+          "description": "GameModeId name."
+        },
+        "onlineMatch": {
+          "type": "boolean",
+          "description": "True if played online, false if local pass-and-play or vs bots."
+        },
+        "roomCode": {
+          "type": "string",
+          "description": "6-character room code for online matches, or empty string for local matches."
+        },
+        "winnerName": {
+          "type": "string",
+          "description": "Display nickname of the match winner."
+        },
+        "winnerColor": {
+          "type": "string",
+          "description": "PlayerColor enum name of the match winner."
+        },
+        "won": {
+          "type": "boolean",
+          "description": "Whether the owner won the match."
+        },
+        "rank": {
+          "type": "integer",
+          "description": "Owner finishing placement (1-4, or 0 for pass-and-play)."
+        },
+        "playerSummary": {
+          "type": "string",
+          "description": "Compact summary of participating players."
+        },
+        "turnsPlayed": {
+          "type": "integer",
+          "description": "Total turns played in the match."
+        },
+        "capturesMade": {
+          "type": "integer",
+          "description": "Opponent captures made by the user in this match."
+        },
+        "tokensHome": {
+          "type": "integer",
+          "description": "Tokens sent home by the user in this match (0-4)."
+        },
+        "powerUpsUsed": {
+          "type": "integer",
+          "description": "Power-ups activated by the user in this match."
+        },
+        "players": {
+          "type": "array",
+          "description": "Bounded list (max 4) of per-player result maps (nickname, color, isBot, rank, capturesMade, tokensHome, powerUpsUsed, score)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp() on creation."
+        }
+      },
+      "required": [
+        "userId",
+        "mode",
+        "onlineMatch",
+        "roomCode",
+        "winnerName",
+        "winnerColor",
+        "won",
+        "rank",
+        "playerSummary",
+        "turnsPlayed",
+        "capturesMade",
+        "tokensHome",
+        "powerUpsUsed",
+        "players",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Private user profiles isolated per authenticated UID."
+    },
+    "/users/{userId}/matchHistory/{matchId}": {
+      "schema": { "$ref": "#/entities/MatchHistoryRecord" },
+      "description": "Private per-user completed match history records."
+    },
+    "/leaderboard/{userId}": {
+      "schema": { "$ref": "#/entities/LeaderboardEntry" },
+      "description": "Global leaderboard stats for Google-authenticated players."
+    },
+    "/rooms/{roomCode}": {
+      "schema": { "$ref": "#/entities/OnlineRoom" },
+      "description": "Online multiplayer rooms for friend codes, matchmaking, live turn state, and rematch voting."
+    }
+  }
+}

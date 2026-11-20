@@ -1,0 +1,342 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: default deny everything
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Shared Security Primitives ---
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidRoomCode(code) {
+      return code is string && code.size() == 6 && code.matches('^[A-Z0-9]{6}$');
+    }
+
+    function isValidMode(mode) {
+      return mode is string && mode in [
+        'CLASSIC',
+        'QUICK',
+        'MASTER',
+        'POWER_UP',
+        'TIMED',
+        'TEAMS_2V2',
+        'ONE_TOKEN_RACE',
+        'CHAOS',
+        'ELIMINATION'
+      ];
+    }
+
+    function isValidRoomStatus(status) {
+      return status is string && status in ['LOBBY', 'PLAYING', 'FINISHED', 'CLOSED'];
+    }
+
+    function isValidActionType(actionType) {
+      return actionType is string && actionType in [
+        'NONE',
+        'START',
+        'ROLL',
+        'MOVE',
+        'SHIELD',
+        'DOUBLE_DICE',
+        'BOMB',
+        'TIMEOUT',
+        'BOT_TAKEOVER',
+        'RECONNECT',
+        'REMATCH',
+        'LEAVE'
+      ];
+    }
+
+    // --- Entity Validation Blueprints ---
+
+    function isValidUserProfile(data) {
+      return data.userId is string && isValidId(data.userId) &&
+             data.nickname is string && data.nickname.size() >= 1 && data.nickname.size() <= 24 &&
+             data.googleLinked is bool &&
+             data.wins is int && data.wins >= 0 &&
+             data.gamesPlayed is int && data.gamesPlayed >= data.wins &&
+             data.weeklyWins is int && data.weeklyWins >= 0 &&
+             data.weeklyGamesPlayed is int && data.weeklyGamesPlayed >= data.weeklyWins &&
+             data.weekKey is string && data.weekKey.size() >= 4 && data.weekKey.size() <= 16 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidMatchHistory(data) {
+      return data.userId is string && isValidId(data.userId) &&
+             isValidMode(data.mode) &&
+             data.onlineMatch is bool &&
+             data.roomCode is string && data.roomCode.size() <= 6 &&
+             data.winnerName is string && data.winnerName.size() >= 1 && data.winnerName.size() <= 40 &&
+             data.winnerColor is string && data.winnerColor in ['RED', 'GREEN', 'YELLOW', 'BLUE'] &&
+             data.won is bool &&
+             data.rank is int && data.rank >= 0 && data.rank <= 4 &&
+             data.playerSummary is string && data.playerSummary.size() <= 180 &&
+             data.turnsPlayed is int && data.turnsPlayed >= 0 && data.turnsPlayed <= 5000 &&
+             (!('capturesMade' in data) || (data.capturesMade is int && data.capturesMade >= 0 && data.capturesMade <= 500)) &&
+             (!('tokensHome' in data) || (data.tokensHome is int && data.tokensHome >= 0 && data.tokensHome <= 4)) &&
+             (!('powerUpsUsed' in data) || (data.powerUpsUsed is int && data.powerUpsUsed >= 0 && data.powerUpsUsed <= 200)) &&
+             (!('players' in data) || (data.players is list && data.players.size() <= 4)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidLeaderboardEntry(data) {
+      return data.userId is string && isValidId(data.userId) &&
+             data.nickname is string && data.nickname.size() >= 1 && data.nickname.size() <= 24 &&
+             data.googleLinked is bool && data.googleLinked == true &&
+             data.wins is int && data.wins >= 0 &&
+             data.gamesPlayed is int && data.gamesPlayed >= data.wins &&
+             data.weeklyWins is int && data.weeklyWins >= 0 &&
+             data.weeklyGamesPlayed is int && data.weeklyGamesPlayed >= data.weeklyWins &&
+             data.weekKey is string && data.weekKey.size() >= 4 && data.weekKey.size() <= 16 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidRoom(data) {
+      return isValidRoomCode(data.roomCode) &&
+             data.hostUid is string && data.hostUid.size() <= 128 &&
+             isValidMode(data.mode) &&
+             data.targetPlayerCount is int && data.targetPlayerCount >= 2 && data.targetPlayerCount <= 4 &&
+             data.timedDurationSeconds is int && data.timedDurationSeconds >= 60 && data.timedDurationSeconds <= 1800 &&
+             isValidRoomStatus(data.status) &&
+             data.publicMatchmaking is bool &&
+             data.memberUids is list && data.memberUids.size() <= 4 &&
+             (data.memberUids.size() == 0 || (data.memberUids[0] is string && data.memberUids[0].size() <= 128)) &&
+             data.seats is list && data.seats.size() >= 2 && data.seats.size() <= 4 &&
+             data.seats[0] is map &&
+             data.diceSeed is int &&
+             data.rollSeq is int && data.rollSeq >= 0 &&
+             data.turnSeq is int && data.turnSeq >= 0 &&
+             isValidActionType(data.lastActionType) &&
+             data.lastActionSummary is string && data.lastActionSummary.size() <= 180 &&
+             data.lastMovedColor is string && data.lastMovedColor.size() <= 16 &&
+             data.lastMovedTokenId is int && data.lastMovedTokenId >= -1 && data.lastMovedTokenId <= 3 &&
+             data.lastMovedFromProgress is int && data.lastMovedFromProgress >= -1 && data.lastMovedFromProgress <= 56 &&
+             data.lastMovedToProgress is int && data.lastMovedToProgress >= -1 && data.lastMovedToProgress <= 56 &&
+             data.gameStateMap is map &&
+             data.turnStartedAt is timestamp && data.turnStartedAt <= request.time &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    // --- Collection: /users/{userId} (Strictly Private Per-User) ---
+
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().keys().hasAll([
+                         'userId', 'nickname', 'googleLinked', 'wins', 'gamesPlayed',
+                         'weeklyWins', 'weeklyGamesPlayed', 'weekKey', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'nickname', 'googleLinked', 'wins', 'gamesPlayed',
+                         'weeklyWins', 'weeklyGamesPlayed', 'weekKey', 'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidUserProfile(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       isValidUserProfile(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'nickname', 'googleLinked', 'wins', 'gamesPlayed',
+                         'weeklyWins', 'weeklyGamesPlayed', 'weekKey', 'updatedAt'
+                       ]);
+
+      allow delete: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+
+      match /matchHistory/{matchId} {
+        allow get, list: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+
+        allow create: if isSignedIn() &&
+                         isValidId(userId) &&
+                         isValidId(matchId) &&
+                         request.auth.uid == userId &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().keys().hasAll([
+                           'userId', 'mode', 'onlineMatch', 'roomCode', 'winnerName',
+                           'winnerColor', 'won', 'rank', 'playerSummary', 'turnsPlayed', 'createdAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'mode', 'onlineMatch', 'roomCode', 'winnerName',
+                           'winnerColor', 'won', 'rank', 'playerSummary', 'turnsPlayed',
+                           'capturesMade', 'tokensHome', 'powerUpsUsed', 'players', 'createdAt'
+                         ]) &&
+                         isValidMatchHistory(incoming());
+
+        allow update: if false;
+        allow delete: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+      }
+    }
+
+    // --- Collection: /leaderboard/{userId} (Public Non-PII Stats, Google Accounts Only) ---
+
+    match /leaderboard/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) &&
+                    (request.auth.uid == userId || existing().googleLinked == true);
+      allow list: if isSignedIn() && resource.data.googleLinked == true;
+
+      allow create: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().gamesPlayed <= 50 &&
+                       incoming().wins <= 50 &&
+                       incoming().keys().hasAll([
+                         'userId', 'nickname', 'googleLinked', 'wins', 'gamesPlayed',
+                         'weeklyWins', 'weeklyGamesPlayed', 'weekKey', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'nickname', 'googleLinked', 'wins', 'gamesPlayed',
+                         'weeklyWins', 'weeklyGamesPlayed', 'weekKey', 'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidLeaderboardEntry(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       isValidLeaderboardEntry(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().wins >= existing().wins &&
+                       incoming().gamesPlayed >= existing().gamesPlayed &&
+                       incoming().wins - existing().wins <= 50 &&
+                       incoming().gamesPlayed - existing().gamesPlayed <= 50 &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'nickname', 'wins', 'gamesPlayed',
+                         'weeklyWins', 'weeklyGamesPlayed', 'weekKey', 'updatedAt'
+                       ]);
+
+      allow delete: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+    }
+
+    // --- Collection: /rooms/{roomCode} (Multiplayer Rooms, Matchmaking & Synced Game State) ---
+
+    match /rooms/{roomCode} {
+      allow get: if isSignedIn() && isValidRoomCode(roomCode);
+
+      // Enforces query alignment: either searching public matchmaking lobbies OR listing own rooms
+      allow list: if isSignedIn() && (
+        (resource.data.status == 'LOBBY' && resource.data.publicMatchmaking == true) ||
+        (request.auth.uid in resource.data.memberUids)
+      );
+
+      allow create: if isSignedIn() &&
+                       isValidRoomCode(roomCode) &&
+                       incoming().roomCode == roomCode &&
+                       incoming().hostUid == request.auth.uid &&
+                       request.auth.uid in incoming().memberUids &&
+                       incoming().memberUids.size() == 1 &&
+                       incoming().status == 'LOBBY' &&
+                       incoming().rollSeq == 0 &&
+                       incoming().turnSeq == 0 &&
+                       incoming().keys().hasAll([
+                         'roomCode', 'hostUid', 'mode', 'targetPlayerCount', 'timedDurationSeconds',
+                         'status', 'publicMatchmaking', 'memberUids', 'seats', 'diceSeed',
+                         'rollSeq', 'turnSeq', 'lastActionType', 'lastActionSummary',
+                         'lastMovedColor', 'lastMovedTokenId', 'lastMovedFromProgress', 'lastMovedToProgress',
+                         'gameStateMap', 'turnStartedAt', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'roomCode', 'hostUid', 'mode', 'targetPlayerCount', 'timedDurationSeconds',
+                         'status', 'publicMatchmaking', 'memberUids', 'seats', 'diceSeed',
+                         'rollSeq', 'turnSeq', 'lastActionType', 'lastActionSummary',
+                         'lastMovedColor', 'lastMovedTokenId', 'lastMovedFromProgress', 'lastMovedToProgress',
+                         'gameStateMap', 'turnStartedAt', 'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidRoom(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidRoomCode(roomCode) &&
+                       isValidRoom(incoming()) &&
+                       existing().status != 'CLOSED' &&
+                       incoming().roomCode == existing().roomCode &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().publicMatchmaking == existing().publicMatchmaking &&
+                       (
+                         // Action 1: New player joins an open LOBBY (and auto-starts if public matchmaking fills last seat)
+                         (
+                           existing().status == 'LOBBY' &&
+                           !(request.auth.uid in existing().memberUids) &&
+                           request.auth.uid in incoming().memberUids &&
+                           incoming().memberUids.size() == existing().memberUids.size() + 1 &&
+                           incoming().memberUids.size() <= existing().targetPlayerCount &&
+                           incoming().hostUid == existing().hostUid &&
+                           incoming().status in ['LOBBY', 'PLAYING'] &&
+                           incoming().diff(existing()).affectedKeys().hasOnly([
+                             'memberUids', 'seats', 'status', 'diceSeed', 'turnSeq',
+                             'lastActionType', 'lastActionSummary', 'gameStateMap', 'turnStartedAt', 'updatedAt'
+                           ])
+                         ) ||
+                         // Action 2: Lobby member updates bots/settings, leaves, transfers host, or starts match
+                         (
+                           existing().status == 'LOBBY' &&
+                           (request.auth.uid in existing().memberUids) &&
+                           incoming().status in ['LOBBY', 'PLAYING', 'CLOSED'] &&
+                           incoming().diff(existing()).affectedKeys().hasOnly([
+                             'hostUid', 'memberUids', 'seats', 'status', 'mode', 'targetPlayerCount',
+                             'timedDurationSeconds', 'diceSeed', 'rollSeq', 'turnSeq',
+                             'lastActionType', 'lastActionSummary', 'gameStateMap', 'turnStartedAt', 'updatedAt'
+                           ])
+                         ) ||
+                         // Action 3: Playing member submits turn action, heartbeat, timeout skip, bot takeover, reconnect, or host transfer
+                         (
+                           existing().status == 'PLAYING' &&
+                           (request.auth.uid in existing().memberUids) &&
+                           incoming().status in ['PLAYING', 'FINISHED', 'CLOSED'] &&
+                           incoming().turnSeq >= existing().turnSeq &&
+                           incoming().rollSeq >= existing().rollSeq &&
+                           incoming().diceSeed == existing().diceSeed &&
+                           incoming().diff(existing()).affectedKeys().hasOnly([
+                             'hostUid', 'memberUids', 'seats', 'status', 'rollSeq', 'turnSeq',
+                             'lastActionType', 'lastActionSummary', 'lastMovedColor', 'lastMovedTokenId',
+                             'lastMovedFromProgress', 'lastMovedToProgress', 'gameStateMap', 'turnStartedAt', 'updatedAt'
+                           ])
+                         ) ||
+                         // Action 4: Post-game rematch voting, starting rematch, or leaving/closing room
+                         (
+                           existing().status == 'FINISHED' &&
+                           (request.auth.uid in existing().memberUids) &&
+                           incoming().status in ['FINISHED', 'PLAYING', 'CLOSED'] &&
+                           incoming().diff(existing()).affectedKeys().hasOnly([
+                             'hostUid', 'memberUids', 'seats', 'status', 'diceSeed', 'rollSeq', 'turnSeq',
+                             'lastActionType', 'lastActionSummary', 'lastMovedColor', 'lastMovedTokenId',
+                             'lastMovedFromProgress', 'lastMovedToProgress', 'gameStateMap', 'turnStartedAt', 'updatedAt'
+                           ])
+                         )
+                       );
+
+      allow delete: if isSignedIn() &&
+                       isValidRoomCode(roomCode) &&
+                       existing().hostUid == request.auth.uid &&
+                       existing().status == 'LOBBY' &&
+                       existing().memberUids.size() <= 1;
+    }
+  }
+}
