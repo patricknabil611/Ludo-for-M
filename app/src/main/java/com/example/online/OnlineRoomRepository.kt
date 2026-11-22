@@ -108,11 +108,13 @@ class OnlineRoomRepository(
         hostNickname: String,
         mode: GameModeId,
         targetPlayerCount: Int,
-        timedDurationSeconds: Int
+        timedDurationSeconds: Int,
+        hostAvatarId: String = ""
     ): Result<String> {
         return createRoomInternal(
             hostUid = hostUid,
             hostNickname = hostNickname,
+            hostAvatarId = hostAvatarId,
             mode = mode,
             targetPlayerCount = targetPlayerCount,
             timedDurationSeconds = timedDurationSeconds,
@@ -129,7 +131,8 @@ class OnlineRoomRepository(
         nickname: String,
         mode: GameModeId,
         targetPlayerCount: Int,
-        timedDurationSeconds: Int = 300
+        timedDurationSeconds: Int = 300,
+        avatarId: String = ""
     ): Result<String> {
         val effectiveCount = if (mode == GameModeId.TEAMS_2V2) 4 else targetPlayerCount.coerceIn(2, 4)
         return try {
@@ -154,7 +157,13 @@ class OnlineRoomRepository(
                 if (uid in candidate.memberUids) {
                     return Result.success(candidate.roomCode)
                 }
-                val joinRes = joinRoomByCode(candidate.roomCode, uid, nickname, autoStartWhenFull = true)
+                val joinRes = joinRoomByCode(
+                    roomCode = candidate.roomCode,
+                    uid = uid,
+                    nickname = nickname,
+                    autoStartWhenFull = true,
+                    avatarId = avatarId
+                )
                 if (joinRes.isSuccess) {
                     return Result.success(candidate.roomCode)
                 }
@@ -163,6 +172,7 @@ class OnlineRoomRepository(
             createRoomInternal(
                 hostUid = uid,
                 hostNickname = nickname,
+                hostAvatarId = avatarId,
                 mode = mode,
                 targetPlayerCount = effectiveCount,
                 timedDurationSeconds = timedDurationSeconds,
@@ -179,6 +189,7 @@ class OnlineRoomRepository(
     private suspend fun createRoomInternal(
         hostUid: String,
         hostNickname: String,
+        hostAvatarId: String,
         mode: GameModeId,
         targetPlayerCount: Int,
         timedDurationSeconds: Int,
@@ -186,6 +197,7 @@ class OnlineRoomRepository(
     ): Result<String> {
         val count = if (mode == GameModeId.TEAMS_2V2) 4 else targetPlayerCount.coerceIn(2, 4)
         val cleanName = hostNickname.trim().take(24).ifBlank { "Player" }
+        val cleanAvatar = hostAvatarId.trim().take(64)
         val duration = timedDurationSeconds.coerceIn(60, 1800)
 
         repeat(5) {
@@ -196,7 +208,7 @@ class OnlineRoomRepository(
                     val existing = tx.get(ref)
                     if (existing.exists()) return@runTransaction false
 
-                    val seats = buildInitialSeats(count, hostUid, cleanName)
+                    val seats = buildInitialSeats(count, hostUid, cleanName, cleanAvatar)
                     val seed = Random.nextLong(1L, Long.MAX_VALUE)
                     tx.set(
                         ref,
@@ -242,13 +254,15 @@ class OnlineRoomRepository(
         roomCode: String,
         uid: String,
         nickname: String,
-        autoStartWhenFull: Boolean = false
+        autoStartWhenFull: Boolean = false,
+        avatarId: String = ""
     ): Result<OnlineRoom> {
         val code = roomCode.trim().uppercase()
         if (!Regex("^[A-Z0-9]{6}$").matches(code)) {
             return Result.failure(IllegalArgumentException("Enter a valid 6-character room code."))
         }
         val cleanName = nickname.trim().take(24).ifBlank { "Player" }
+        val cleanAvatar = avatarId.trim().take(64)
         val ref = roomsCol.document(code)
 
         return try {
@@ -280,6 +294,7 @@ class OnlineRoomRepository(
                         seat.copy(
                             uid = uid,
                             nickname = cleanName,
+                            avatarId = cleanAvatar,
                             controllerType = SeatControl.HUMAN,
                             connected = true,
                             botTakeover = false,
@@ -509,6 +524,7 @@ class OnlineRoomRepository(
                                 seat.copy(
                                     uid = "",
                                     nickname = "Open Seat",
+                                    avatarId = "",
                                     controllerType = SeatControl.OPEN,
                                     connected = false,
                                     botTakeover = false,
@@ -1237,7 +1253,8 @@ class OnlineRoomRepository(
     private fun buildInitialSeats(
         targetCount: Int,
         hostUid: String,
-        hostNickname: String
+        hostNickname: String,
+        hostAvatarId: String = ""
     ): List<OnlineRoomSeat> {
         val colors = when (targetCount) {
             2 -> listOf(PlayerColor.RED, PlayerColor.YELLOW)
@@ -1252,6 +1269,7 @@ class OnlineRoomRepository(
                     color = color,
                     uid = hostUid,
                     nickname = hostNickname,
+                    avatarId = hostAvatarId,
                     controllerType = SeatControl.HUMAN,
                     botDifficulty = BotDifficulty.MEDIUM,
                     connected = true,
@@ -1266,6 +1284,7 @@ class OnlineRoomRepository(
                     color = color,
                     uid = "",
                     nickname = "Open Seat",
+                    avatarId = "",
                     controllerType = SeatControl.OPEN,
                     botDifficulty = BotDifficulty.MEDIUM,
                     connected = false,

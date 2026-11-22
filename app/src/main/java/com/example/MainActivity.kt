@@ -129,7 +129,9 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(settings) {
                     soundManager.updateSettings(
                         soundEffects = settings.soundEffectsEnabled,
-                        music = settings.musicEnabled
+                        music = settings.musicEnabled,
+                        soundEffectsVolume = settings.soundEffectsVolume,
+                        musicVolume = settings.musicVolume
                     )
                     hapticsManager.updateEnabled(settings.vibrationEnabled)
                 }
@@ -304,6 +306,7 @@ class MainActivity : ComponentActivity() {
                                 authState = authState,
                                 historyState = historyState,
                                 onEditNickname = { newName -> authViewModel.updateNickname(newName) },
+                                onEditAvatar = { newAvatar -> authViewModel.updateAvatar(newAvatar) },
                                 onUpgradeOrSignInClick = { navController.navigate(LudoRoutes.ONLINE_AUTH) },
                                 onBackClick = { navController.popBackStack() }
                             )
@@ -369,13 +372,18 @@ class MainActivity : ComponentActivity() {
                                             nickname = authState.effectiveNickname,
                                             mode = mode,
                                             targetPlayerCount = count,
-                                            timedDurationSeconds = timedSec
+                                            timedDurationSeconds = timedSec,
+                                            avatarId = authState.effectiveAvatarId
                                         ) { code ->
                                             navController.navigate(LudoRoutes.onlineLobby(code))
                                         }
                                     },
                                     onJoinByCode = { code ->
-                                        hubViewModel.joinRoomByCode(code, authState.effectiveNickname) { room ->
+                                        hubViewModel.joinRoomByCode(
+                                            roomCode = code,
+                                            nickname = authState.effectiveNickname,
+                                            avatarId = authState.effectiveAvatarId
+                                        ) { room ->
                                             if (room.status == RoomStatus.PLAYING) {
                                                 navController.navigate(LudoRoutes.onlineGame(room.roomCode))
                                             } else {
@@ -388,7 +396,8 @@ class MainActivity : ComponentActivity() {
                                             nickname = authState.effectiveNickname,
                                             mode = mode,
                                             targetPlayerCount = count,
-                                            timedDurationSeconds = timedSec
+                                            timedDurationSeconds = timedSec,
+                                            avatarId = authState.effectiveAvatarId
                                         )
                                     },
                                     onCancelMatchmaking = { hubViewModel.cancelMatchmaking() },
@@ -522,7 +531,8 @@ class MainActivity : ComponentActivity() {
                                 }
 
                                 val roomStatus = wrapper.room?.status
-                                if (roomStatus == RoomStatus.FINISHED) {
+                                val showingHomeCelebration = wrapper.gameUiState.allTokensHomeCelebration != null
+                                if (roomStatus == RoomStatus.FINISHED && !showingHomeCelebration) {
                                     WinnerScreen(
                                         gameState = wrapper.gameUiState.gameState,
                                         onlineRematchUi = wrapper.rematchUi,
@@ -579,7 +589,10 @@ class MainActivity : ComponentActivity() {
                                                 }
                                             }
                                         },
-                                        onMatchFinished = { }
+                                        onMatchFinished = { },
+                                        onDismissAllTokensHomeCelebration = {
+                                            onlineGameVm.dismissAllTokensHomeCelebration()
+                                        }
                                     )
                                 }
                             }
@@ -633,6 +646,8 @@ class MainActivity : ComponentActivity() {
                     composable(LudoRoutes.SETUP) {
                         GameSetupScreen(
                             selectedMode = selectedMode,
+                            defaultProfileNickname = authState.effectiveNickname,
+                            defaultProfileAvatarId = authState.effectiveAvatarId,
                             showPowerUpGuide = false,
                             onDismissPowerUpGuide = { settingsViewModel.markPowerUpGuideSeen() },
                             onBackClick = { navController.popBackStack() },
@@ -707,6 +722,9 @@ class MainActivity : ComponentActivity() {
                                 navController.navigate(LudoRoutes.WINNER) {
                                     popUpTo(LudoRoutes.GAME) { inclusive = true }
                                 }
+                            },
+                            onDismissAllTokensHomeCelebration = {
+                                gameViewModel.dismissAllTokensHomeCelebration()
                             }
                         )
                     }
@@ -731,7 +749,44 @@ class MainActivity : ComponentActivity() {
                         SettingsScreen(
                             settings = settings,
                             onToggleSoundEffects = settingsViewModel::setSoundEffects,
+                            onSoundEffectsVolumeLiveChange = { vol ->
+                                soundManager.updateSettings(
+                                    soundEffects = vol > 0f,
+                                    music = settings.musicEnabled,
+                                    soundEffectsVolume = vol,
+                                    musicVolume = settings.musicVolume
+                                )
+                            },
+                            onSoundEffectsVolumeCommit = { vol ->
+                                soundManager.updateSettings(
+                                    soundEffects = vol > 0f,
+                                    music = settings.musicEnabled,
+                                    soundEffectsVolume = vol,
+                                    musicVolume = settings.musicVolume
+                                )
+                                settingsViewModel.setSoundEffectsVolume(vol)
+                                if (vol > 0f) {
+                                    soundManager.playTokenMove()
+                                }
+                            },
                             onToggleMusic = settingsViewModel::setMusic,
+                            onMusicVolumeLiveChange = { vol ->
+                                soundManager.updateSettings(
+                                    soundEffects = settings.soundEffectsEnabled,
+                                    music = vol > 0f,
+                                    soundEffectsVolume = settings.soundEffectsVolume,
+                                    musicVolume = vol
+                                )
+                            },
+                            onMusicVolumeCommit = { vol ->
+                                soundManager.updateSettings(
+                                    soundEffects = settings.soundEffectsEnabled,
+                                    music = vol > 0f,
+                                    soundEffectsVolume = settings.soundEffectsVolume,
+                                    musicVolume = vol
+                                )
+                                settingsViewModel.setMusicVolume(vol)
+                            },
                             onToggleVibration = settingsViewModel::setVibration,
                             onReplayTutorialClick = { navController.navigate(LudoRoutes.TUTORIAL) },
                             onBackClick = { navController.popBackStack() }

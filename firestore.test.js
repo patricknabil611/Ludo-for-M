@@ -141,14 +141,23 @@ test("Users collection: owner create/read/update succeeds; cross-user and shadow
     aliceDb.collection("users").where("userId", "==", ALICE_UID).get()
   );
 
-  // Partial update matching Kotlin UserProfileRepository
+  // Partial update matching Kotlin UserProfileRepository (including custom avatarId)
   await assertSucceeds(
     aliceDb.collection("users").doc(ALICE_UID).update({
       nickname: "AlicePro",
+      avatarId: "v1:FOX:COBALT:GOLD_RING:CROWN",
       wins: 3,
       gamesPlayed: 6,
       weeklyWins: 2,
       weeklyGamesPlayed: 3,
+      updatedAt: new Date(Date.now() - 1000),
+    })
+  );
+
+  // Oversized avatarId rejected (>64 chars)
+  await assertFails(
+    aliceDb.collection("users").doc(ALICE_UID).update({
+      avatarId: "v1:" + "X".repeat(70),
       updatedAt: new Date(Date.now() - 1000),
     })
   );
@@ -241,9 +250,10 @@ test("Leaderboard: Google user creates/updates own entry; filtered query succeed
     })
   );
 
-  // Valid incremental match update succeeds
+  // Valid incremental match + avatarId update succeeds
   await assertSucceeds(
     aliceDb.collection("leaderboard").doc(ALICE_UID).update({
+      avatarId: "v1:LION:SUNSET:DOUBLE_RIM:CROWN",
       wins: 3,
       gamesPlayed: 6,
       weeklyWins: 2,

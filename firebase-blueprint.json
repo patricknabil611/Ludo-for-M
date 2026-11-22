@@ -13,6 +13,10 @@
           "type": "string",
           "description": "Player display nickname (1-24 characters)."
         },
+        "avatarId": {
+          "type": "string",
+          "description": "Encoded custom avatar identifier (optional, max 64 characters)."
+        },
         "googleLinked": {
           "type": "boolean",
           "description": "True for Google-authenticated accounts eligible for the global leaderboard."
@@ -73,6 +77,10 @@
         "nickname": {
           "type": "string",
           "description": "Public display nickname (1-24 characters)."
+        },
+        "avatarId": {
+          "type": "string",
+          "description": "Encoded custom avatar identifier (optional, max 64 characters)."
         },
         "googleLinked": {
           "type": "boolean",

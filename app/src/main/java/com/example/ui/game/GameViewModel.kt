@@ -89,7 +89,8 @@ data class GameUiState(
     val activeChaosBanner: ChaosAnnouncementState? = null,
     val activePowerUpBanner: PowerUpBannerState? = null,
     val eliminatedBannerColor: PlayerColor? = null,
-    val powerUpTargeting: PowerUpTargetingState? = null
+    val powerUpTargeting: PowerUpTargetingState? = null,
+    val allTokensHomeCelebration: AllTokensHomeCelebrationState? = null
 ) {
     companion object {
         const val TURN_DURATION_SECONDS = 30
@@ -125,6 +126,7 @@ class GameViewModel(
     private var bannerJob: Job? = null
     private var powerUpBannerJob: Job? = null
     private var powerUpBannerCounter: Int = 0
+    private var celebrationCounter: Int = 0
     private var remainingMs: Long = GameUiState.TURN_DURATION_SECONDS * 1000L
     private var lastWarnedSecond: Int = -1
 
@@ -230,6 +232,10 @@ class GameViewModel(
         _uiState.update { it.copy(isGuideOverlayVisible = visible) }
     }
 
+    fun dismissAllTokensHomeCelebration() {
+        _uiState.update { it.copy(allTokensHomeCelebration = null) }
+    }
+
     fun saveCurrentProgressIfActive() {
         val state = _uiState.value.gameState
         if (!state.isMatchFinished) {
@@ -253,6 +259,7 @@ class GameViewModel(
         if (!currentRuleSet.powerUpsEnabled ||
             current.isPaused ||
             current.isGuideOverlayVisible ||
+            current.allTokensHomeCelebration != null ||
             current.isDiceRolling ||
             current.isAnimatingMove ||
             state.phase != TurnPhase.AWAITING_ROLL ||
@@ -357,6 +364,7 @@ class GameViewModel(
         val state = current.gameState
         if (!currentRuleSet.powerUpsEnabled ||
             current.isPaused ||
+            current.allTokensHomeCelebration != null ||
             current.isDiceRolling ||
             current.isAnimatingMove ||
             state.phase != TurnPhase.AWAITING_ROLL ||
@@ -391,6 +399,7 @@ class GameViewModel(
         val state = current.gameState
         if (!currentRuleSet.powerUpsEnabled ||
             current.isPaused ||
+            current.allTokensHomeCelebration != null ||
             current.isDiceRolling ||
             current.isAnimatingMove ||
             state.phase != TurnPhase.AWAITING_ROLL ||
@@ -424,6 +433,7 @@ class GameViewModel(
         val current = _uiState.value
         if (current.isPaused ||
             current.isGuideOverlayVisible ||
+            current.allTokensHomeCelebration != null ||
             current.isDiceRolling ||
             current.isAnimatingMove ||
             current.gameState.phase != TurnPhase.AWAITING_ROLL ||
@@ -475,6 +485,7 @@ class GameViewModel(
         val current = _uiState.value
         if (current.isPaused ||
             current.isGuideOverlayVisible ||
+            current.allTokensHomeCelebration != null ||
             current.isDiceRolling ||
             current.isAnimatingMove ||
             current.gameState.activePlayer.setup.isBot ||
@@ -492,6 +503,7 @@ class GameViewModel(
         val current = _uiState.value
         if (current.isPaused ||
             current.isGuideOverlayVisible ||
+            current.allTokensHomeCelebration != null ||
             current.isDiceRolling ||
             current.isAnimatingMove ||
             current.gameState.phase != TurnPhase.AWAITING_ROLL ||
@@ -511,6 +523,7 @@ class GameViewModel(
         val current = _uiState.value
         if (current.isPaused ||
             current.isGuideOverlayVisible ||
+            current.allTokensHomeCelebration != null ||
             current.isDiceRolling ||
             current.isAnimatingMove ||
             current.gameState.activePlayer.setup.isBot
@@ -565,10 +578,11 @@ class GameViewModel(
 
         botTurnJob?.cancel()
         botTurnJob = viewModelScope.launch {
-            // Wait if guide dialog or a big banner is visible
+            // Wait if guide dialog, celebration modal, or a big banner is visible
             while (_uiState.value.activeChaosBanner != null ||
                 _uiState.value.eliminatedBannerColor != null ||
-                _uiState.value.isGuideOverlayVisible
+                _uiState.value.isGuideOverlayVisible ||
+                _uiState.value.allTokensHomeCelebration != null
             ) {
                 delay(120L)
             }
@@ -749,7 +763,10 @@ class GameViewModel(
         var remaining = totalMs
         val slice = 80L
         while (remaining > 0L) {
-            if (_uiState.value.isPaused || _uiState.value.isGuideOverlayVisible) {
+            if (_uiState.value.isPaused ||
+                _uiState.value.isGuideOverlayVisible ||
+                _uiState.value.allTokensHomeCelebration != null
+            ) {
                 delay(slice)
             } else {
                 val step = minOf(slice, remaining)
@@ -884,7 +901,14 @@ class GameViewModel(
             _uiState.update { it.copy(homeConfettiTrigger = it.homeConfettiTrigger + 1) }
         }
 
-        val outcome = engine.applyMove(_uiState.value.gameState, move)
+        val prevState = _uiState.value.gameState
+        val outcome = engine.applyMove(prevState, move)
+        val celebration = CelebrationSequenceHelper.detectAllFourTokensHome(
+            prevState = prevState,
+            nextState = outcome.state,
+            nextTriggerKey = celebrationCounter + 1
+        )?.also { celebrationCounter += 1 }
+
         if (outcome.state.isMatchFinished) {
             timerJob?.cancel()
             timedClockJob?.cancel()
@@ -896,11 +920,16 @@ class GameViewModel(
                     isAnimatingMove = false,
                     animatingToken = null,
                     hopScale = 1f,
-                    powerUpTargeting = null
+                    powerUpTargeting = null,
+                    allTokensHomeCelebration = celebration ?: it.allTokensHomeCelebration
                 )
             }
             clearSavedState()
         } else if (outcome.hasRemainingDiceMoves) {
+            if (celebration != null) {
+                soundManager.playWin()
+                hapticsManager.vibrateWin()
+            }
             // Same player still has another rolled die number left to play this turn
             _uiState.update {
                 it.copy(
@@ -908,7 +937,8 @@ class GameViewModel(
                     isAnimatingMove = false,
                     animatingToken = null,
                     hopScale = 1f,
-                    powerUpTargeting = null
+                    powerUpTargeting = null,
+                    allTokensHomeCelebration = celebration ?: it.allTokensHomeCelebration
                 )
             }
             persistCurrentState(outcome.state)
@@ -946,10 +976,15 @@ class GameViewModel(
                 }
             }
         } else {
+            if (celebration != null) {
+                soundManager.playWin()
+                hapticsManager.vibrateWin()
+            }
             applyTurnTransitionSideEffects(
                 nextState = outcome.state,
                 chaosEvent = outcome.triggeredChaosEvent,
-                eliminatedColor = outcome.eliminatedPlayer
+                eliminatedColor = outcome.eliminatedPlayer,
+                celebration = celebration
             )
         }
     }
@@ -990,7 +1025,8 @@ class GameViewModel(
     private fun applyTurnTransitionSideEffects(
         nextState: GameState,
         chaosEvent: ChaosEventType? = null,
-        eliminatedColor: PlayerColor? = null
+        eliminatedColor: PlayerColor? = null,
+        celebration: AllTokensHomeCelebrationState? = null
     ) {
         val prevAnnouncementId = _uiState.value.gameState.chaosState.announcementId
         val newAnnouncementId = nextState.chaosState.announcementId
@@ -1010,7 +1046,8 @@ class GameViewModel(
                 animatingToken = null,
                 hopScale = 1f,
                 displayedSecondDiceValue = it.displayedSecondDiceValue ?: 6,
-                powerUpTargeting = null
+                powerUpTargeting = null,
+                allTokensHomeCelebration = celebration ?: it.allTokensHomeCelebration
             )
         }
         persistCurrentState(nextState)
@@ -1065,6 +1102,7 @@ class GameViewModel(
                 if (s.gameState.isMatchFinished) break
                 val timerPaused = s.isPaused ||
                     s.isGuideOverlayVisible ||
+                    s.allTokensHomeCelebration != null ||
                     s.isDiceRolling ||
                     s.isAnimatingMove ||
                     s.activeChaosBanner != null ||
@@ -1110,7 +1148,7 @@ class GameViewModel(
                 delay(1000L)
                 val s = _uiState.value
                 if (s.gameState.isMatchFinished) break
-                if (s.isPaused || s.isGuideOverlayVisible) continue
+                if (s.isPaused || s.isGuideOverlayVisible || s.allTokensHomeCelebration != null) continue
 
                 val nextRemaining = (s.gameState.timedRemainingSeconds - 1).coerceAtLeast(0)
                 if (nextRemaining <= 0) {

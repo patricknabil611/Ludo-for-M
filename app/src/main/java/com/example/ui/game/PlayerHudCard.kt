@@ -48,10 +48,12 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.data.PlayerAvatarCodec
 import com.example.engine.GameModeId
 import com.example.engine.PlayerColor
 import com.example.engine.PlayerState
 import com.example.engine.PowerUpType
+import com.example.ui.components.PlayerAvatarBadge
 import com.example.ui.theme.CoralPink
 import com.example.ui.theme.InkDark
 import com.example.ui.theme.InkMuted
@@ -417,8 +419,15 @@ private fun AvatarWithTimerRing(
     val palette = player.color.palette()
     val ringColor = if (remainingSeconds <= 5) CoralPink else palette.primary
 
+    val resolvedAvatar = PlayerAvatarCodec.resolve(
+        raw = player.avatarId,
+        fallbackColor = player.color,
+        isBot = player.setup.isBot,
+        seed = player.setup.seatIndex
+    )
+
     Box(
-        modifier = Modifier.size(42.dp),
+        modifier = Modifier.size(44.dp),
         contentAlignment = Alignment.Center
     ) {
         if (isActive && !player.isEliminated) {
@@ -441,25 +450,49 @@ private fun AvatarWithTimerRing(
             }
         }
 
-        Box(
-            modifier = Modifier
-                .size(32.dp)
-                .clip(CircleShape)
-                .background(if (player.isEliminated) InkMuted else palette.primary),
-            contentAlignment = Alignment.Center
-        ) {
-            val avatarIcon = when {
-                player.isEliminated -> Icons.Filled.Close
-                finishRank == 1 -> Icons.Filled.EmojiEvents
-                player.setup.isBot -> Icons.Filled.SmartToy
-                else -> Icons.Filled.Person
+        PlayerAvatarBadge(
+            avatar = resolvedAvatar,
+            size = 34.dp,
+            contentDescription = "${player.nickname} avatar",
+            dimmed = player.isEliminated
+        )
+
+        if (player.isEliminated) {
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .size(16.dp),
+                shape = CircleShape,
+                color = CoralPink,
+                border = BorderStroke(1.dp, Color.White)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(11.dp)
+                    )
+                }
             }
-            Icon(
-                imageVector = avatarIcon,
-                contentDescription = "${player.nickname} avatar",
-                tint = Color.White,
-                modifier = Modifier.size(19.dp)
-            )
+        } else if (finishRank == 1) {
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .size(17.dp),
+                shape = CircleShape,
+                color = SunnyGold,
+                border = BorderStroke(1.dp, Color.White)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Filled.EmojiEvents,
+                        contentDescription = null,
+                        tint = InkDark,
+                        modifier = Modifier.size(11.dp)
+                    )
+                }
+            }
         }
     }
 }

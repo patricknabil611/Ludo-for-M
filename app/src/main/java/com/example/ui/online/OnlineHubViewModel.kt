@@ -80,6 +80,7 @@ class OnlineHubViewModel(
         mode: GameModeId,
         targetPlayerCount: Int,
         timedDurationSeconds: Int,
+        avatarId: String = "",
         onRoomCreated: (String) -> Unit
     ) {
         if (_uiState.value.isBusy) return
@@ -90,7 +91,8 @@ class OnlineHubViewModel(
                 hostNickname = nickname,
                 mode = mode,
                 targetPlayerCount = targetPlayerCount,
-                timedDurationSeconds = timedDurationSeconds
+                timedDurationSeconds = timedDurationSeconds,
+                hostAvatarId = avatarId
             )
             result.onSuccess { code ->
                 observeLobby(code, isMatchmaking = false)
@@ -110,6 +112,7 @@ class OnlineHubViewModel(
     fun joinRoomByCode(
         roomCode: String,
         nickname: String,
+        avatarId: String = "",
         onJoined: (OnlineRoom) -> Unit
     ) {
         if (_uiState.value.isBusy) return
@@ -119,7 +122,8 @@ class OnlineHubViewModel(
                 roomCode = roomCode,
                 uid = uid,
                 nickname = nickname,
-                autoStartWhenFull = false
+                autoStartWhenFull = false,
+                avatarId = avatarId
             )
             result.onSuccess { room ->
                 if (room.status == RoomStatus.LOBBY) {
@@ -142,7 +146,8 @@ class OnlineHubViewModel(
         nickname: String,
         mode: GameModeId,
         targetPlayerCount: Int,
-        timedDurationSeconds: Int = 300
+        timedDurationSeconds: Int = 300,
+        avatarId: String = ""
     ) {
         if (_uiState.value.isBusy || _uiState.value.isSearchingMatchmaking) return
         viewModelScope.launch {
@@ -160,7 +165,8 @@ class OnlineHubViewModel(
                 nickname = nickname,
                 mode = mode,
                 targetPlayerCount = targetPlayerCount,
-                timedDurationSeconds = timedDurationSeconds
+                timedDurationSeconds = timedDurationSeconds,
+                avatarId = avatarId
             )
             result.onSuccess { code ->
                 _uiState.update { it.copy(isBusy = false) }

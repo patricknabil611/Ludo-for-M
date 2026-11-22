@@ -70,6 +70,7 @@ service cloud.firestore {
     function isValidUserProfile(data) {
       return data.userId is string && isValidId(data.userId) &&
              data.nickname is string && data.nickname.size() >= 1 && data.nickname.size() <= 24 &&
+             (!('avatarId' in data) || (data.avatarId is string && data.avatarId.size() <= 64)) &&
              data.googleLinked is bool &&
              data.wins is int && data.wins >= 0 &&
              data.gamesPlayed is int && data.gamesPlayed >= data.wins &&
@@ -101,6 +102,7 @@ service cloud.firestore {
     function isValidLeaderboardEntry(data) {
       return data.userId is string && isValidId(data.userId) &&
              data.nickname is string && data.nickname.size() >= 1 && data.nickname.size() <= 24 &&
+             (!('avatarId' in data) || (data.avatarId is string && data.avatarId.size() <= 64)) &&
              data.googleLinked is bool && data.googleLinked == true &&
              data.wins is int && data.wins >= 0 &&
              data.gamesPlayed is int && data.gamesPlayed >= data.wins &&
@@ -153,7 +155,7 @@ service cloud.firestore {
                          'weeklyWins', 'weeklyGamesPlayed', 'weekKey', 'createdAt', 'updatedAt'
                        ]) &&
                        incoming().keys().hasOnly([
-                         'userId', 'nickname', 'googleLinked', 'wins', 'gamesPlayed',
+                         'userId', 'nickname', 'avatarId', 'googleLinked', 'wins', 'gamesPlayed',
                          'weeklyWins', 'weeklyGamesPlayed', 'weekKey', 'createdAt', 'updatedAt'
                        ]) &&
                        isValidUserProfile(incoming());
@@ -165,7 +167,7 @@ service cloud.firestore {
                        incoming().userId == existing().userId &&
                        incoming().createdAt == existing().createdAt &&
                        incoming().diff(existing()).affectedKeys().hasOnly([
-                         'nickname', 'googleLinked', 'wins', 'gamesPlayed',
+                         'nickname', 'avatarId', 'googleLinked', 'wins', 'gamesPlayed',
                          'weeklyWins', 'weeklyGamesPlayed', 'weekKey', 'updatedAt'
                        ]);
 
@@ -213,7 +215,7 @@ service cloud.firestore {
                          'weeklyWins', 'weeklyGamesPlayed', 'weekKey', 'createdAt', 'updatedAt'
                        ]) &&
                        incoming().keys().hasOnly([
-                         'userId', 'nickname', 'googleLinked', 'wins', 'gamesPlayed',
+                         'userId', 'nickname', 'avatarId', 'googleLinked', 'wins', 'gamesPlayed',
                          'weeklyWins', 'weeklyGamesPlayed', 'weekKey', 'createdAt', 'updatedAt'
                        ]) &&
                        isValidLeaderboardEntry(incoming());
@@ -229,7 +231,7 @@ service cloud.firestore {
                        incoming().wins - existing().wins <= 50 &&
                        incoming().gamesPlayed - existing().gamesPlayed <= 50 &&
                        incoming().diff(existing()).affectedKeys().hasOnly([
-                         'nickname', 'wins', 'gamesPlayed',
+                         'nickname', 'avatarId', 'wins', 'gamesPlayed',
                          'weeklyWins', 'weeklyGamesPlayed', 'weekKey', 'updatedAt'
                        ]);
 

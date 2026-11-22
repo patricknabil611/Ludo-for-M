@@ -68,10 +68,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.example.R
 import com.example.data.MatchHistoryEntry
+import com.example.data.PlayerAvatarConfig
 import com.example.engine.GameModeId
+import com.example.ui.components.AvatarCustomizerDialog
 import com.example.ui.components.CartoonButton
 import com.example.ui.components.CartoonCard
 import com.example.ui.components.CartoonIconButton
+import com.example.ui.components.PlayerAvatarBadge
 import com.example.ui.online.ModeAggregateStats
 import com.example.ui.online.OnlineAuthUiState
 import com.example.ui.online.StatsHistoryUiState
@@ -105,10 +108,12 @@ fun StatsHistoryScreen(
     authState: OnlineAuthUiState,
     historyState: StatsHistoryUiState,
     onEditNickname: (String) -> Unit,
+    onEditAvatar: (PlayerAvatarConfig) -> Unit = {},
     onUpgradeOrSignInClick: () -> Unit,
     onBackClick: () -> Unit
 ) {
     var showEditNicknameDialog by remember { mutableStateOf(false) }
+    var showAvatarStudioDialog by remember { mutableStateOf(false) }
     var nicknameDraft by remember(authState.effectiveNickname) {
         mutableStateOf(authState.effectiveNickname)
     }
@@ -213,22 +218,17 @@ fun StatsHistoryScreen(
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(52.dp)
+                                    .size(64.dp)
                                     .clip(CircleShape)
-                                    .background(
-                                        if (authState.isSignedInWithGoogle) CobaltPrimary else MintGreenDark
-                                    ),
+                                    .clickable { showAvatarStudioDialog = true }
+                                    .testTag("profile_avatar_button"),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(
-                                    imageVector = if (authState.isSignedInWithGoogle) {
-                                        Icons.Filled.AccountCircle
-                                    } else {
-                                        Icons.Filled.Person
-                                    },
-                                    contentDescription = null,
-                                    tint = Color.White,
-                                    modifier = Modifier.size(30.dp)
+                                PlayerAvatarBadge(
+                                    avatar = authState.effectiveAvatar,
+                                    size = 62.dp,
+                                    contentDescription = stringResource(R.string.cd_customize_avatar),
+                                    showEditBadge = true
                                 )
                             }
 
@@ -264,8 +264,22 @@ fun StatsHistoryScreen(
                         )
                     }
 
+                    Spacer(Modifier.height(12.dp))
+
+                    CartoonButton(
+                        text = stringResource(R.string.avatar_customize_cta),
+                        onClick = { showAvatarStudioDialog = true },
+                        tag = "customize_avatar_button",
+                        icon = Icons.Filled.AutoAwesome,
+                        containerColor = SunnyGold,
+                        lipColor = SunnyGoldDark,
+                        contentColor = InkDark,
+                        minHeight = 48.dp,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
                     if (!authState.isSignedInWithGoogle) {
-                        Spacer(Modifier.height(12.dp))
+                        Spacer(Modifier.height(10.dp))
                         CartoonButton(
                             text = stringResource(R.string.online_upgrade_google_cta),
                             onClick = onUpgradeOrSignInClick,
@@ -504,6 +518,19 @@ fun StatsHistoryScreen(
         MatchDetailDialog(
             entry = entry,
             onDismiss = { detailMatch = null }
+        )
+    }
+
+    if (showAvatarStudioDialog) {
+        AvatarCustomizerDialog(
+            initialAvatar = authState.effectiveAvatar,
+            title = stringResource(R.string.avatar_studio_title),
+            subtitle = authState.effectiveNickname,
+            onDismiss = { showAvatarStudioDialog = false },
+            onSave = { updated ->
+                onEditAvatar(updated)
+                showAvatarStudioDialog = false
+            }
         )
     }
 }

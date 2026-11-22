@@ -17,7 +17,8 @@ data class SeatConfig(
     val occupancy: SeatOccupancy,
     val nickname: String,
     val color: PlayerColor,
-    val botDifficulty: BotDifficulty = BotDifficulty.MEDIUM
+    val botDifficulty: BotDifficulty = BotDifficulty.MEDIUM,
+    val avatarId: String = ""
 )
 
 /**
@@ -97,7 +98,8 @@ object MatchSeatPlanner {
                 } else {
                     PlayerControllerType.HUMAN_LOCAL
                 },
-                botDifficulty = seat.botDifficulty
+                botDifficulty = seat.botDifficulty,
+                avatarId = seat.avatarId
             )
         }
     }

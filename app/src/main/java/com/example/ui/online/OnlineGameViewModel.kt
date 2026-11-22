@@ -25,6 +25,7 @@ import com.example.online.RoomStatus
 import com.example.online.friendlyNetworkErrorMessage
 import com.example.online.unwrapFirestoreError
 import com.example.ui.game.CaptureBurstState
+import com.example.ui.game.CelebrationSequenceHelper
 import com.example.ui.game.ChaosAnnouncementState
 import com.example.ui.game.DiceCube3DEngine
 import com.example.ui.game.GameUiState
@@ -93,6 +94,7 @@ class OnlineGameViewModel(
     private var lastTimeoutRequestedTurnSeq: Int = -1
     private var lastWarnedSecond: Int = -1
     private var powerUpBannerCounter: Int = 0
+    private var celebrationCounter: Int = 0
 
     private var animationJob: Job? = null
     private var botCoordinatorJob: Job? = null
@@ -168,6 +170,19 @@ class OnlineGameViewModel(
         val turnAdvanced = room.turnSeq != lastObservedTurnSeq
         val rollAdvanced = room.rollSeq != lastObservedRollSeq
         val prevState = prevRoom?.gameState
+        val isRematchRestart = room.status == RoomStatus.PLAYING && prevRoom?.status == RoomStatus.FINISHED
+
+        val detectedCelebration = if (turnAdvanced && prevState != null) {
+            CelebrationSequenceHelper.detectAllFourTokensHome(
+                prevState = prevState,
+                nextState = newGameState,
+                nextTriggerKey = celebrationCounter + 1
+            )?.also {
+                celebrationCounter += 1
+                soundManager.playWin()
+                hapticsManager.vibrateWin()
+            }
+        } else null
 
         _state.update { current ->
             val mergedGameState = if (!turnAdvanced &&
@@ -177,6 +192,11 @@ class OnlineGameViewModel(
                 newGameState.copy(selectedDieValue = current.gameUiState.gameState.selectedDieValue)
             } else {
                 newGameState
+            }
+            val nextCelebration = when {
+                detectedCelebration != null -> detectedCelebration
+                isRematchRestart -> null
+                else -> current.gameUiState.allTokensHomeCelebration
             }
             val nextGameUi = current.gameUiState.copy(
                 gameState = mergedGameState,
@@ -188,7 +208,8 @@ class OnlineGameViewModel(
                     ?: current.gameUiState.displayedDiceValue,
                 displayedSecondDiceValue = mergedGameState.lastSecondDiceValue
                     ?: current.gameUiState.displayedSecondDiceValue
-                    ?: 6
+                    ?: 6,
+                allTokensHomeCelebration = nextCelebration
             )
             current.copy(
                 room = room,
@@ -212,8 +233,10 @@ class OnlineGameViewModel(
         // Record online leaderboard stats exactly once when the match completes
         if (room.status == RoomStatus.FINISHED && recordedFinishedTurnSeq != room.turnSeq) {
             recordedFinishedTurnSeq = room.turnSeq
-            soundManager.playWin()
-            hapticsManager.vibrateWin()
+            if (detectedCelebration == null) {
+                soundManager.playWin()
+                hapticsManager.vibrateWin()
+            }
             recordStatsIfParticipant(newGameState, localColor)
         }
 
@@ -831,6 +854,10 @@ class OnlineGameViewModel(
 
     fun pauseMenuOpen(open: Boolean) {
         _state.update { it.copy(gameUiState = it.gameUiState.copy(isPaused = open)) }
+    }
+
+    fun dismissAllTokensHomeCelebration() {
+        _state.update { it.copy(gameUiState = it.gameUiState.copy(allTokensHomeCelebration = null)) }
     }
 
     private fun showPowerUpBanner(

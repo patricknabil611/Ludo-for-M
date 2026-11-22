@@ -140,7 +140,8 @@ data class PlayerSetup(
     val nickname: String,
     val color: PlayerColor,
     val controllerType: PlayerControllerType = PlayerControllerType.HUMAN_LOCAL,
-    val botDifficulty: BotDifficulty = BotDifficulty.MEDIUM
+    val botDifficulty: BotDifficulty = BotDifficulty.MEDIUM,
+    val avatarId: String = ""
 ) {
     val isBot: Boolean get() = controllerType == PlayerControllerType.BOT
 }
@@ -203,6 +204,7 @@ data class PlayerState(
 ) {
     val color: PlayerColor get() = setup.color
     val nickname: String get() = setup.nickname
+    val avatarId: String get() = setup.avatarId
     val finishedTokenCount: Int get() = tokens.count { it.isHome }
     val allTokensHome: Boolean get() = tokens.all { it.isHome }
     val totalProgress: Int

@@ -77,6 +77,8 @@ class OnlineProfileAndLeaderboardRepository(
                 val existingLb = if (lbSnap.exists()) parseLeaderboardEntry(lbSnap) else null
 
                 val finalNickname = existingUser?.nickname?.takeIf { it.isNotBlank() } ?: preferredNickname
+                val guestAvatar = guestStatsToMerge?.avatarId.orEmpty().trim().take(64)
+                val finalAvatarId = existingUser?.avatarId?.takeIf { it.isNotBlank() } ?: guestAvatar
                 val baseWins = existingUser?.wins ?: 0L
                 val baseGames = existingUser?.gamesPlayed ?: 0L
                 val sameWeek = existingUser?.weekKey == currentWeek
@@ -88,12 +90,15 @@ class OnlineProfileAndLeaderboardRepository(
                 val newWeeklyWins = baseWeeklyWins + guestWeeklyWins.toLong()
                 val newWeeklyGames = maxOf(baseWeeklyGames + guestWeeklyGames.toLong(), newWeeklyWins)
 
+                val shouldSyncAvatar = finalAvatarId.isNotBlank() && existingUser?.avatarId != finalAvatarId
+
                 if (!userSnap.exists()) {
                     tx.set(
                         userRef,
                         mapOf(
                             "userId" to uid,
                             "nickname" to finalNickname,
+                            "avatarId" to finalAvatarId,
                             "googleLinked" to true,
                             "wins" to newWins,
                             "gamesPlayed" to newGames,
@@ -104,11 +109,12 @@ class OnlineProfileAndLeaderboardRepository(
                             "updatedAt" to FieldValue.serverTimestamp()
                         )
                     )
-                } else if (guestGames > 0 || !sameWeek || existingUser?.googleLinked != true) {
+                } else if (guestGames > 0 || !sameWeek || existingUser?.googleLinked != true || shouldSyncAvatar) {
                     tx.update(
                         userRef,
                         mapOf(
                             "nickname" to finalNickname,
+                            "avatarId" to finalAvatarId,
                             "googleLinked" to true,
                             "wins" to newWins,
                             "gamesPlayed" to newGames,
@@ -120,6 +126,7 @@ class OnlineProfileAndLeaderboardRepository(
                     )
                 }
 
+                val shouldSyncLbAvatar = finalAvatarId.isNotBlank() && existingLb?.avatarId != finalAvatarId
                 if (!lbSnap.exists()) {
                     val lbCreateGames = newGames.coerceAtMost(50L)
                     val lbCreateWins = newWins.coerceAtMost(lbCreateGames)
@@ -130,6 +137,7 @@ class OnlineProfileAndLeaderboardRepository(
                         mapOf(
                             "userId" to uid,
                             "nickname" to finalNickname,
+                            "avatarId" to finalAvatarId,
                             "googleLinked" to true,
                             "wins" to lbCreateWins,
                             "gamesPlayed" to lbCreateGames,
@@ -140,7 +148,7 @@ class OnlineProfileAndLeaderboardRepository(
                             "updatedAt" to FieldValue.serverTimestamp()
                         )
                     )
-                } else if (guestGames > 0 || !sameWeek) {
+                } else if (guestGames > 0 || !sameWeek || shouldSyncLbAvatar) {
                     val prevLbWins = existingLb?.wins ?: 0L
                     val prevLbGames = existingLb?.gamesPlayed ?: 0L
                     val lbSameWeek = existingLb?.weekKey == currentWeek
@@ -156,6 +164,7 @@ class OnlineProfileAndLeaderboardRepository(
                         lbRef,
                         mapOf(
                             "nickname" to finalNickname,
+                            "avatarId" to finalAvatarId,
                             "wins" to nextLbWins,
                             "gamesPlayed" to nextLbGames,
                             "weeklyWins" to nextLbWeeklyWins,
@@ -170,6 +179,7 @@ class OnlineProfileAndLeaderboardRepository(
                     docId = uid,
                     userId = uid,
                     nickname = finalNickname,
+                    avatarId = finalAvatarId,
                     googleLinked = true,
                     wins = newWins,
                     gamesPlayed = newGames,
@@ -225,6 +235,42 @@ class OnlineProfileAndLeaderboardRepository(
         }
     }
 
+    suspend fun updateAvatar(uid: String, avatarId: String): Result<Unit> {
+        val clean = avatarId.trim().take(64)
+        return try {
+            firestore.runTransaction { tx ->
+                val userRef = usersCol.document(uid)
+                val lbRef = leaderboardCol.document(uid)
+                val userSnap = tx.get(userRef)
+                val lbSnap = tx.get(lbRef)
+                if (userSnap.exists()) {
+                    tx.update(
+                        userRef,
+                        mapOf(
+                            "avatarId" to clean,
+                            "updatedAt" to FieldValue.serverTimestamp()
+                        )
+                    )
+                }
+                if (lbSnap.exists()) {
+                    tx.update(
+                        lbRef,
+                        mapOf(
+                            "avatarId" to clean,
+                            "updatedAt" to FieldValue.serverTimestamp()
+                        )
+                    )
+                }
+            }.await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, "users/$uid")
+            Result.failure(e)
+        }
+    }
+
     /**
      * Records a completed online match result (+1 game, optional +1 win) in both
      * /users/{uid} and /leaderboard/{uid} atomically.
@@ -245,6 +291,7 @@ class OnlineProfileAndLeaderboardRepository(
 
                 val existingUser = if (userSnap.exists()) parseUserProfile(userSnap) else null
                 val nickname = existingUser?.nickname?.takeIf { it.isNotBlank() } ?: cleanFallback
+                val avatarId = existingUser?.avatarId.orEmpty().trim().take(64)
                 val winDelta = if (won) 1L else 0L
 
                 val nextWins = (existingUser?.wins ?: 0L) + winDelta
@@ -262,6 +309,7 @@ class OnlineProfileAndLeaderboardRepository(
                         mapOf(
                             "userId" to uid,
                             "nickname" to nickname,
+                            "avatarId" to avatarId,
                             "googleLinked" to true,
                             "wins" to nextWins,
                             "gamesPlayed" to nextGames,
@@ -292,6 +340,7 @@ class OnlineProfileAndLeaderboardRepository(
                         mapOf(
                             "userId" to uid,
                             "nickname" to nickname,
+                            "avatarId" to avatarId,
                             "googleLinked" to true,
                             "wins" to nextWins.coerceAtMost(50L),
                             "gamesPlayed" to nextGames.coerceAtMost(50L),
@@ -316,6 +365,7 @@ class OnlineProfileAndLeaderboardRepository(
                         lbRef,
                         mapOf(
                             "nickname" to nickname,
+                            "avatarId" to avatarId,
                             "wins" to lbWins,
                             "gamesPlayed" to lbGames,
                             "weeklyWins" to lbWeeklyWins,
@@ -407,6 +457,7 @@ class OnlineProfileAndLeaderboardRepository(
             docId = doc.id,
             userId = doc.getString("userId") ?: doc.id,
             nickname = doc.getString("nickname") ?: "Player",
+            avatarId = doc.getString("avatarId").orEmpty(),
             googleLinked = doc.getBoolean("googleLinked") ?: true,
             wins = doc.getLong("wins") ?: 0L,
             gamesPlayed = doc.getLong("gamesPlayed") ?: 0L,
@@ -425,6 +476,7 @@ class OnlineProfileAndLeaderboardRepository(
             docId = doc.id,
             userId = doc.getString("userId") ?: doc.id,
             nickname = doc.getString("nickname") ?: "Player",
+            avatarId = doc.getString("avatarId").orEmpty(),
             googleLinked = doc.getBoolean("googleLinked") ?: true,
             wins = doc.getLong("wins") ?: 0L,
             gamesPlayed = doc.getLong("gamesPlayed") ?: 0L,

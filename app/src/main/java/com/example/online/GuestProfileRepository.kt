@@ -22,6 +22,7 @@ class GuestProfileRepository(private val context: Context) {
 
     private object Keys {
         val NICKNAME = stringPreferencesKey("guest_nickname")
+        val AVATAR_ID = stringPreferencesKey("guest_avatar_id")
         val ACTIVE = booleanPreferencesKey("guest_mode_active")
         val WINS = intPreferencesKey("guest_wins")
         val GAMES = intPreferencesKey("guest_games")
@@ -36,6 +37,7 @@ class GuestProfileRepository(private val context: Context) {
         val sameWeek = storedWeek == currentWeek
         GuestProfile(
             nickname = prefs[Keys.NICKNAME].orEmpty(),
+            avatarId = prefs[Keys.AVATAR_ID].orEmpty(),
             guestModeActive = prefs[Keys.ACTIVE] ?: false,
             wins = prefs[Keys.WINS] ?: 0,
             gamesPlayed = prefs[Keys.GAMES] ?: 0,
@@ -55,6 +57,13 @@ class GuestProfileRepository(private val context: Context) {
             if (prefs[Keys.WEEK_KEY] == null) {
                 prefs[Keys.WEEK_KEY] = WeekKeyUtil.currentWeekKey()
             }
+        }
+    }
+
+    suspend fun updateGuestAvatar(avatarId: String) {
+        val clean = avatarId.trim().take(64)
+        context.guestDataStore.edit { prefs ->
+            prefs[Keys.AVATAR_ID] = clean
         }
     }
 

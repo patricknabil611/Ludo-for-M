@@ -26,6 +26,7 @@ data class UserProfileDoc(
     @DocumentId val docId: String = "",
     val userId: String = "",
     val nickname: String = "Player",
+    val avatarId: String = "",
     val googleLinked: Boolean = true,
     val wins: Long = 0L,
     val gamesPlayed: Long = 0L,
@@ -45,6 +46,7 @@ data class LeaderboardEntryDoc(
     @DocumentId val docId: String = "",
     val userId: String = "",
     val nickname: String = "Player",
+    val avatarId: String = "",
     val googleLinked: Boolean = true,
     val wins: Long = 0L,
     val gamesPlayed: Long = 0L,
@@ -82,6 +84,7 @@ data class LeaderboardSnapshot(
  */
 data class GuestProfile(
     val nickname: String = "",
+    val avatarId: String = "",
     val guestModeActive: Boolean = false,
     val wins: Int = 0,
     val gamesPlayed: Int = 0,
@@ -138,6 +141,7 @@ data class OnlineRoomSeat(
     val color: PlayerColor,
     val uid: String = "",
     val nickname: String = "Open Seat",
+    val avatarId: String = "",
     val controllerType: SeatControl = SeatControl.OPEN,
     val botDifficulty: BotDifficulty = BotDifficulty.MEDIUM,
     val connected: Boolean = false,
@@ -157,7 +161,8 @@ data class OnlineRoomSeat(
         nickname = if (botTakeover) "$nickname (Bot)" else nickname,
         color = color,
         controllerType = if (isEffectiveBot) PlayerControllerType.BOT else PlayerControllerType.ONLINE_REMOTE,
-        botDifficulty = effectiveBotDifficulty
+        botDifficulty = effectiveBotDifficulty,
+        avatarId = avatarId
     )
 
     fun toFirestoreMap(): Map<String, Any> = mapOf(
@@ -165,6 +170,7 @@ data class OnlineRoomSeat(
         "color" to color.name,
         "uid" to uid,
         "nickname" to nickname,
+        "avatarId" to avatarId,
         "controllerType" to controllerType.name,
         "botDifficulty" to botDifficulty.name,
         "connected" to connected,
@@ -184,6 +190,7 @@ data class OnlineRoomSeat(
                 color = color,
                 uid = (map["uid"] as? String).orEmpty(),
                 nickname = (map["nickname"] as? String).orEmpty().ifBlank { "Player" },
+                avatarId = (map["avatarId"] as? String).orEmpty(),
                 controllerType = SeatControl.fromRaw(map["controllerType"] as? String),
                 botDifficulty = diff,
                 connected = (map["connected"] as? Boolean) ?: false,

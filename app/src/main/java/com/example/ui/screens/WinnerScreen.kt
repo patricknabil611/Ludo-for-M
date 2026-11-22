@@ -45,12 +45,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.example.R
+import com.example.data.PlayerAvatarCodec
 import com.example.engine.GameModeId
 import com.example.engine.GameState
 import com.example.engine.PlayerState
 import com.example.ui.components.CartoonButton
 import com.example.ui.components.CartoonCard
 import com.example.ui.components.ConfettiOverlay
+import com.example.ui.components.PlayerAvatarBadge
 import com.example.ui.theme.CobaltDark
 import com.example.ui.theme.CobaltPrimary
 import com.example.ui.theme.CreamBackground
@@ -207,11 +209,26 @@ fun WinnerScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = "4th Place • ${fourth.nickname}",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = InkDark
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                PlayerAvatarBadge(
+                                    avatar = PlayerAvatarCodec.resolve(
+                                        raw = fourth.avatarId,
+                                        fallbackColor = fourth.color,
+                                        isBot = fourth.setup.isBot,
+                                        seed = fourth.setup.seatIndex
+                                    ),
+                                    size = 32.dp,
+                                    contentDescription = fourth.nickname
+                                )
+                                Text(
+                                    text = "4th Place • ${fourth.nickname}",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = InkDark
+                                )
+                            }
                             val fourthStat = buildString {
                                 append(
                                     if (gameState.mode == GameModeId.TIMED) {
@@ -310,22 +327,16 @@ private fun PodiumPillar(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         if (player != null) {
-            val palette = player.color.palette()
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(CircleShape)
-                    .background(palette.primary)
-                    .border(3.dp, Color.White, CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = if (player.setup.isBot) Icons.Filled.SmartToy else Icons.Filled.Person,
-                    contentDescription = player.nickname,
-                    tint = Color.White,
-                    modifier = Modifier.size(26.dp)
-                )
-            }
+            PlayerAvatarBadge(
+                avatar = PlayerAvatarCodec.resolve(
+                    raw = player.avatarId,
+                    fallbackColor = player.color,
+                    isBot = player.setup.isBot,
+                    seed = player.setup.seatIndex
+                ),
+                size = if (rank == 1) 60.dp else 52.dp,
+                contentDescription = player.nickname
+            )
             Spacer(Modifier.height(6.dp))
             Text(
                 text = player.nickname,

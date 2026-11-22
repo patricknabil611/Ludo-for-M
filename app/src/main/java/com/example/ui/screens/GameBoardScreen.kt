@@ -75,6 +75,7 @@ import com.example.ui.components.CartoonButton
 import com.example.ui.components.CartoonCard
 import com.example.ui.components.CartoonIconButton
 import com.example.ui.components.ConfettiOverlay
+import com.example.ui.game.AllTokensHomeCelebrationOverlay
 import com.example.ui.game.GameUiState
 import com.example.ui.game.LudoBoardCanvas
 import com.example.ui.game.LudoDice3D
@@ -124,19 +125,30 @@ fun GameBoardScreen(
     onRestart: () -> Unit,
     onEndMatchEarly: () -> Unit,
     onQuitToMenu: () -> Unit,
-    onMatchFinished: () -> Unit
+    onMatchFinished: () -> Unit,
+    onDismissAllTokensHomeCelebration: () -> Unit = {}
 ) {
     val gameState = uiState.gameState
+    var hadMatchOverCelebration by remember { mutableStateOf(false) }
 
-    LaunchedEffect(gameState.isMatchFinished) {
-        if (gameState.isMatchFinished) {
-            delay(750L)
+    LaunchedEffect(uiState.allTokensHomeCelebration?.triggerKey) {
+        if (uiState.allTokensHomeCelebration?.isMatchOver == true) {
+            hadMatchOverCelebration = true
+        }
+    }
+
+    LaunchedEffect(gameState.isMatchFinished, uiState.allTokensHomeCelebration) {
+        if (gameState.isMatchFinished && uiState.allTokensHomeCelebration == null) {
+            if (!hadMatchOverCelebration) {
+                delay(750L)
+            }
             onMatchFinished()
         }
     }
 
-    BackHandler(enabled = !gameState.isMatchFinished) {
+    BackHandler(enabled = !gameState.isMatchFinished || uiState.allTokensHomeCelebration != null) {
         when {
+            uiState.allTokensHomeCelebration != null -> onDismissAllTokensHomeCelebration()
             showPowerUpGuide -> onDismissPowerUpGuide()
             uiState.powerUpTargeting != null -> onCancelPowerUpTargeting()
             uiState.isPaused -> onResume()
@@ -172,6 +184,7 @@ fun GameBoardScreen(
     val canUsePowerUpsNow = gameState.mode == GameModeId.POWER_UP &&
         !uiState.isPaused &&
         !showPowerUpGuide &&
+        uiState.allTokensHomeCelebration == null &&
         !uiState.isDiceRolling &&
         !uiState.isAnimatingMove &&
         !activePlayer.setup.isBot &&
@@ -605,6 +618,7 @@ fun GameBoardScreen(
             val playableDice = gameState.playableDiceValues()
             val activeSelectedDie = gameState.effectiveSelectedDieValue()
             val canChooseDieStep = !uiState.isPaused &&
+                uiState.allTokensHomeCelebration == null &&
                 !uiState.isDiceRolling &&
                 !uiState.isAnimatingMove &&
                 !activePlayer.setup.isBot &&
@@ -784,6 +798,7 @@ fun GameBoardScreen(
 
                         val canRoll = !uiState.isPaused &&
                             !showPowerUpGuide &&
+                            uiState.allTokensHomeCelebration == null &&
                             !uiState.isDiceRolling &&
                             !uiState.isAnimatingMove &&
                             !activePlayer.setup.isBot &&
@@ -857,6 +872,19 @@ fun GameBoardScreen(
                 mode = gameState.mode,
                 onDismiss = onDismissPowerUpGuide
             )
+        }
+
+        AnimatedVisibility(
+            visible = uiState.allTokensHomeCelebration != null && !onlineLoading,
+            enter = fadeIn(),
+            exit = fadeOut()
+        ) {
+            uiState.allTokensHomeCelebration?.let { celebration ->
+                AllTokensHomeCelebrationOverlay(
+                    celebration = celebration,
+                    onDismiss = onDismissAllTokensHomeCelebration
+                )
+            }
         }
     }
 }

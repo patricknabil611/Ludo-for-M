@@ -147,6 +147,7 @@ object GameStateFirestoreMapper {
     private fun playerToMap(player: PlayerState): Map<String, Any> = mapOf(
         "seatIndex" to player.setup.seatIndex,
         "nickname" to player.setup.nickname,
+        "avatarId" to player.setup.avatarId,
         "color" to player.setup.color.name,
         "controllerType" to player.setup.controllerType.name,
         "botDifficulty" to player.setup.botDifficulty.name,
@@ -172,7 +173,8 @@ object GameStateFirestoreMapper {
             nickname = (raw["nickname"] as? String).orEmpty().ifBlank { color.displayName },
             color = color,
             controllerType = ctrl,
-            botDifficulty = diff
+            botDifficulty = diff,
+            avatarId = (raw["avatarId"] as? String).orEmpty()
         )
         val tokens = (raw["tokens"] as? List<*>).orEmpty().mapIndexedNotNull { idx, item ->
             (item as? Map<*, *>)?.let { tokenFromMap(it, idx, color) }

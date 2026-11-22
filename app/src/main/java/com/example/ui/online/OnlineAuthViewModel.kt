@@ -4,6 +4,8 @@ import android.app.Activity
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.data.PlayerAvatarCodec
+import com.example.data.PlayerAvatarConfig
 import com.example.online.AuthManager
 import com.example.online.GoogleAuthResult
 import com.example.online.GuestProfile
@@ -41,6 +43,16 @@ data class OnlineAuthUiState(
             guestProfile.nickname.isNotBlank() -> guestProfile.nickname
             else -> "Player"
         }
+
+    val effectiveAvatarId: String
+        get() = when {
+            userProfile != null && userProfile.avatarId.isNotBlank() -> userProfile.avatarId
+            guestProfile.avatarId.isNotBlank() -> guestProfile.avatarId
+            else -> PlayerAvatarCodec.DEFAULT_PLAYER_AVATAR.encode()
+        }
+
+    val effectiveAvatar: PlayerAvatarConfig
+        get() = PlayerAvatarCodec.resolve(effectiveAvatarId)
 
     val hasGuestStatsToUpgrade: Boolean
         get() = !isSignedInWithGoogle && (guestProfile.gamesPlayed > 0 || guestProfile.guestModeActive)
@@ -154,6 +166,32 @@ class OnlineAuthViewModel(
                 }
             } else {
                 _uiState.update { it.copy(statusBanner = "Nickname updated!") }
+            }
+        }
+    }
+
+    fun updateAvatar(avatar: PlayerAvatarConfig) {
+        val encoded = avatar.encode()
+        val uid = _uiState.value.firebaseUser?.uid
+        viewModelScope.launch {
+            // Always persist locally so guest mode & local game setup remember immediately
+            guestRepo.updateGuestAvatar(encoded)
+            if (uid == null) {
+                _uiState.update { it.copy(statusBanner = "Avatar saved!") }
+                return@launch
+            }
+            val res = profileRepo.updateAvatar(uid, encoded)
+            if (res.isFailure) {
+                _uiState.update {
+                    it.copy(
+                        errorMessage = friendlyNetworkErrorMessage(
+                            res.exceptionOrNull(),
+                            "Could not sync avatar to cloud."
+                        )
+                    )
+                }
+            } else {
+                _uiState.update { it.copy(statusBanner = "Profile avatar updated!") }
             }
         }
     }

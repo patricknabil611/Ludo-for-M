@@ -57,6 +57,7 @@ import com.example.data.SavedGameSummary
 import com.example.ui.components.CartoonButton
 import com.example.ui.components.CartoonCard
 import com.example.ui.components.CartoonIconButton
+import com.example.ui.components.PlayerAvatarBadge
 import com.example.ui.online.OnlineAuthUiState
 import com.example.ui.theme.CobaltDark
 import com.example.ui.theme.CobaltPrimary
@@ -124,15 +125,15 @@ fun HomeScreen(
                     )
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                        modifier = Modifier.padding(start = 8.dp, end = 14.dp, top = 6.dp, bottom = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(
-                            imageVector = if (authState.isSignedInWithGoogle) Icons.Filled.AccountCircle else Icons.Filled.Groups,
-                            contentDescription = null,
-                            tint = CobaltPrimary,
-                            modifier = Modifier.size(18.dp)
+                        PlayerAvatarBadge(
+                            avatar = authState.effectiveAvatar,
+                            size = 28.dp,
+                            contentDescription = stringResource(R.string.cd_player_avatar),
+                            modifier = Modifier.testTag("home_profile_avatar")
                         )
                         Text(
                             text = when {

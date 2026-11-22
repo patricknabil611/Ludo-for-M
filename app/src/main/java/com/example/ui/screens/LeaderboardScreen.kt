@@ -42,9 +42,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
+import com.example.data.PlayerAvatarCodec
 import com.example.online.RankedLeaderboardRow
 import com.example.ui.components.CartoonCard
 import com.example.ui.components.CartoonIconButton
+import com.example.ui.components.PlayerAvatarBadge
 import com.example.ui.online.LeaderboardTab
 import com.example.ui.online.LeaderboardUiState
 import com.example.ui.theme.CobaltPrimary
@@ -254,6 +256,14 @@ fun LeaderboardScreen(
                                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                                     )
                                 }
+                                PlayerAvatarBadge(
+                                    avatar = PlayerAvatarCodec.resolve(
+                                        raw = myRow.entry.avatarId,
+                                        seed = myRow.entry.userId.hashCode()
+                                    ),
+                                    size = 38.dp,
+                                    contentDescription = myRow.entry.nickname
+                                )
                                 Column {
                                     Text(
                                         text = "Your Rank • ${myRow.entry.nickname}",
@@ -315,7 +325,7 @@ private fun LeaderboardRowCard(
         ) {
             Box(
                 modifier = Modifier
-                    .size(38.dp)
+                    .size(36.dp)
                     .clip(CircleShape)
                     .background(badgeBg),
                 contentAlignment = Alignment.Center
@@ -327,6 +337,15 @@ private fun LeaderboardRowCard(
                     fontWeight = FontWeight.ExtraBold
                 )
             }
+
+            PlayerAvatarBadge(
+                avatar = PlayerAvatarCodec.resolve(
+                    raw = row.entry.avatarId,
+                    seed = row.entry.userId.hashCode()
+                ),
+                size = 40.dp,
+                contentDescription = row.entry.nickname
+            )
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(

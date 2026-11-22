@@ -57,6 +57,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
+import com.example.data.PlayerAvatarCodec
 import com.example.engine.BotDifficulty
 import com.example.online.OnlineRoom
 import com.example.online.OnlineRoomSeat
@@ -64,6 +65,7 @@ import com.example.online.SeatControl
 import com.example.ui.components.CartoonButton
 import com.example.ui.components.CartoonCard
 import com.example.ui.components.CartoonIconButton
+import com.example.ui.components.PlayerAvatarBadge
 import com.example.ui.theme.CobaltDark
 import com.example.ui.theme.CobaltPrimary
 import com.example.ui.theme.CoralPink
@@ -327,24 +329,32 @@ private fun LobbySeatRow(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(palette.primary)
-                        .border(2.dp, Color.White, CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    val icon = when (seat.controllerType) {
-                        SeatControl.HUMAN -> Icons.Filled.Person
-                        SeatControl.BOT -> Icons.Filled.SmartToy
-                        SeatControl.OPEN -> Icons.Filled.PersonOutline
+                if (seat.controllerType == SeatControl.OPEN) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .background(palette.primary.copy(alpha = 0.55f))
+                            .border(2.dp, Color.White, CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.PersonOutline,
+                            contentDescription = seat.nickname,
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp)
+                        )
                     }
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = seat.nickname,
-                        tint = Color.White,
-                        modifier = Modifier.size(22.dp)
+                } else {
+                    PlayerAvatarBadge(
+                        avatar = PlayerAvatarCodec.resolve(
+                            raw = seat.avatarId,
+                            fallbackColor = seat.color,
+                            isBot = seat.controllerType == SeatControl.BOT,
+                            seed = seat.seatIndex
+                        ),
+                        size = 42.dp,
+                        contentDescription = seat.nickname
                     )
                 }
 

@@ -42,7 +42,13 @@ open class SoundManager(
     private var sfxEnabled: Boolean = true
 
     @Volatile
+    private var sfxVolume: Float = 1f
+
+    @Volatile
     private var musicEnabled: Boolean = true
+
+    @Volatile
+    private var musicVolume: Float = 1f
 
     @Volatile
     private var appInForeground: Boolean = true
@@ -81,14 +87,28 @@ open class SoundManager(
         }
     }
 
-    fun updateSettings(soundEffects: Boolean, music: Boolean) {
+    fun updateSettings(
+        soundEffects: Boolean,
+        music: Boolean,
+        soundEffectsVolume: Float = sfxVolume,
+        musicVolume: Float = this.musicVolume
+    ) {
         sfxEnabled = soundEffects
+        sfxVolume = soundEffectsVolume.coerceIn(0f, 1f)
+
+        val clampedMusicVolume = musicVolume.coerceIn(0f, 1f)
         val musicChanged = musicEnabled != music
+        val musicVolumeChanged = this.musicVolume != clampedMusicVolume
         musicEnabled = music
-        if (!soundEffects) {
+        this.musicVolume = clampedMusicVolume
+
+        if (!soundEffects || sfxVolume <= 0f) {
             stopAllOneShotPlayers()
         }
-        if (musicChanged || (musicEnabled && appInForeground)) {
+        if (musicVolumeChanged) {
+            applyCurrentMusicVolume()
+        }
+        if (musicChanged || (musicEnabled && clampedMusicVolume > 0f && appInForeground) || clampedMusicVolume <= 0f) {
             syncMusicPlayback()
         }
     }
@@ -158,10 +178,15 @@ open class SoundManager(
      */
     fun playEffect(effect: SoundEffect, volume: Float = effect.defaultVolume) {
         if (released || !sfxEnabled || effect.isMusic) return
-        val clampedVolume = volume.coerceIn(0f, 1f)
+        val effectiveVolume = computeEffectiveVolume(
+            baseVolume = volume,
+            masterVolume = sfxVolume,
+            enabled = sfxEnabled
+        )
+        if (effectiveVolume <= 0f) return
         scope.launch {
             if (released || !sfxEnabled) return@launch
-            playOneShotInternal(effect, clampedVolume)
+            playOneShotInternal(effect, effectiveVolume)
         }
     }
 
@@ -261,18 +286,33 @@ open class SoundManager(
         snapshot.forEach { safeReleasePlayer(it) }
     }
 
+    private fun currentEffectiveMusicVolume(): Float = computeEffectiveVolume(
+        baseVolume = SoundEffect.BACKGROUND_MUSIC.defaultVolume,
+        masterVolume = musicVolume,
+        enabled = musicEnabled
+    )
+
+    private fun applyCurrentMusicVolume() {
+        val vol = currentEffectiveMusicVolume()
+        synchronized(musicLock) {
+            musicPlayer?.let { mp ->
+                runCatching { mp.setVolume(vol, vol) }
+            }
+        }
+    }
+
     private fun syncMusicPlayback() {
         if (released) return
-        val shouldPlay = musicEnabled && appInForeground
+        val shouldPlay = musicEnabled && musicVolume > 0f && appInForeground
         if (shouldPlay) {
             scope.launch {
-                if (released || !musicEnabled || !appInForeground) return@launch
+                if (released || !musicEnabled || musicVolume <= 0f || !appInForeground) return@launch
                 startOrResumeMusicPlayer()
             }
         } else {
             synchronized(musicLock) {
                 val mp = musicPlayer ?: return
-                if (!musicEnabled) {
+                if (!musicEnabled || musicVolume <= 0f) {
                     musicPlayer = null
                     safeReleasePlayer(mp)
                 } else {
@@ -287,10 +327,12 @@ open class SoundManager(
     private fun startOrResumeMusicPlayer() {
         val wavFile = runCatching { ensureWavFile(SoundEffect.BACKGROUND_MUSIC) }.getOrNull() ?: return
         synchronized(musicLock) {
-            if (released || !musicEnabled || !appInForeground) return
+            if (released || !musicEnabled || musicVolume <= 0f || !appInForeground) return
+            val vol = currentEffectiveMusicVolume()
             val existing = musicPlayer
             if (existing != null) {
                 runCatching {
+                    existing.setVolume(vol, vol)
                     if (!existing.isPlaying) existing.start()
                 }
                 return
@@ -304,7 +346,6 @@ open class SoundManager(
                     created.setDataSource(fis.fd)
                 }
                 created.isLooping = true
-                val vol = SoundEffect.BACKGROUND_MUSIC.defaultVolume
                 created.setVolume(vol, vol)
                 created.setOnErrorListener { errored, _, _ ->
                     synchronized(musicLock) {
@@ -314,7 +355,7 @@ open class SoundManager(
                     true
                 }
                 created.prepare()
-                if (released || !musicEnabled || !appInForeground) {
+                if (released || !musicEnabled || musicVolume <= 0f || !appInForeground) {
                     safeReleasePlayer(created)
                     return
                 }
@@ -348,5 +389,14 @@ open class SoundManager(
     companion object {
         private const val SFX_CACHE_DIR = "ludo_sfx"
         private const val MAX_CONCURRENT_SFX_PLAYERS = 6
+
+        fun computeEffectiveVolume(
+            baseVolume: Float,
+            masterVolume: Float,
+            enabled: Boolean
+        ): Float {
+            if (!enabled) return 0f
+            return (baseVolume.coerceIn(0f, 1f) * masterVolume.coerceIn(0f, 1f)).coerceIn(0f, 1f)
+        }
     }
 }

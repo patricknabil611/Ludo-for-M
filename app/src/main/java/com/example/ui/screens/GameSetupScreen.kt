@@ -38,6 +38,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -54,13 +55,16 @@ import com.example.R
 import com.example.bot.MatchSeatPlanner
 import com.example.bot.SeatConfig
 import com.example.bot.SeatOccupancy
+import com.example.data.PlayerAvatarCodec
 import com.example.engine.BotDifficulty
 import com.example.engine.GameModeId
 import com.example.engine.PlayerColor
 import com.example.engine.PlayerSetup
+import com.example.ui.components.AvatarCustomizerDialog
 import com.example.ui.components.CartoonButton
 import com.example.ui.components.CartoonCard
 import com.example.ui.components.CartoonIconButton
+import com.example.ui.components.PlayerAvatarBadge
 import com.example.ui.game.PowerUpGuideDialog
 import com.example.ui.theme.CobaltPrimary
 import com.example.ui.theme.CreamBackground
@@ -77,6 +81,8 @@ import com.example.ui.theme.palette
 @Composable
 fun GameSetupScreen(
     selectedMode: GameModeId,
+    defaultProfileNickname: String = "",
+    defaultProfileAvatarId: String = "",
     showPowerUpGuide: Boolean = false,
     onDismissPowerUpGuide: () -> Unit = {},
     onBackClick: () -> Unit,
@@ -89,30 +95,48 @@ fun GameSetupScreen(
     }
     var targetPlayerCount by remember(selectedMode) { mutableIntStateOf(defaultCount) }
     var timedMinutes by remember(selectedMode) { mutableIntStateOf(5) }
+    var editingAvatarSeatIndex by remember { mutableStateOf<Int?>(null) }
+
+    val seat1Name = defaultProfileNickname.trim().take(14)
+        .takeIf { it.isNotBlank() && !it.equals("Player", ignoreCase = true) }
+        ?: "Player 1"
+    val seat1Avatar = defaultProfileAvatarId.ifBlank {
+        PlayerAvatarCodec.resolve(null, PlayerColor.RED, isBot = false, seed = 0).encode()
+    }
 
     val seats = remember(selectedMode) {
         mutableStateListOf(
-            SeatConfig(0, SeatOccupancy.HUMAN, "Player 1", PlayerColor.RED, BotDifficulty.MEDIUM),
+            SeatConfig(
+                0,
+                SeatOccupancy.HUMAN,
+                seat1Name,
+                PlayerColor.RED,
+                BotDifficulty.MEDIUM,
+                avatarId = seat1Avatar
+            ),
             SeatConfig(
                 1,
                 if (selectedMode == GameModeId.TEAMS_2V2) SeatOccupancy.HUMAN else SeatOccupancy.HUMAN,
                 "Player 2",
                 if (selectedMode == GameModeId.TEAMS_2V2) PlayerColor.GREEN else PlayerColor.YELLOW,
-                BotDifficulty.MEDIUM
+                BotDifficulty.MEDIUM,
+                avatarId = PlayerAvatarCodec.CURATED_PRESETS[1].config.encode()
             ),
             SeatConfig(
                 2,
                 if (selectedMode.minPlayers >= 3) SeatOccupancy.BOT else SeatOccupancy.EMPTY,
                 "Bot 3",
                 if (selectedMode == GameModeId.TEAMS_2V2) PlayerColor.YELLOW else PlayerColor.GREEN,
-                BotDifficulty.MEDIUM
+                BotDifficulty.MEDIUM,
+                avatarId = PlayerAvatarCodec.resolve(null, PlayerColor.GREEN, isBot = true, seed = 2).encode()
             ),
             SeatConfig(
                 3,
                 if (selectedMode.minPlayers >= 4) SeatOccupancy.BOT else SeatOccupancy.EMPTY,
                 "Bot 4",
                 PlayerColor.BLUE,
-                BotDifficulty.MEDIUM
+                BotDifficulty.MEDIUM,
+                avatarId = PlayerAvatarCodec.resolve(null, PlayerColor.BLUE, isBot = true, seed = 3).encode()
             )
         )
     }
@@ -452,25 +476,46 @@ fun GameSetupScreen(
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(30.dp)
-                                                    .clip(CircleShape)
-                                                    .background(
-                                                        if (isEmpty) InkMuted.copy(alpha = 0.25f) else palette.primary
-                                                    ),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Icon(
-                                                    imageVector = if (seat.occupancy == SeatOccupancy.BOT) {
-                                                        Icons.Filled.SmartToy
-                                                    } else {
-                                                        Icons.Filled.Person
-                                                    },
-                                                    contentDescription = null,
-                                                    tint = if (isEmpty) InkMuted else palette.onPrimary,
-                                                    modifier = Modifier.size(18.dp)
+                                            if (isEmpty) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(40.dp)
+                                                        .clip(CircleShape)
+                                                        .background(InkMuted.copy(alpha = 0.25f)),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Filled.Person,
+                                                        contentDescription = null,
+                                                        tint = InkMuted,
+                                                        modifier = Modifier.size(20.dp)
+                                                    )
+                                                }
+                                            } else {
+                                                val seatAvatar = PlayerAvatarCodec.resolve(
+                                                    raw = seat.avatarId,
+                                                    fallbackColor = seat.color,
+                                                    isBot = seat.occupancy == SeatOccupancy.BOT,
+                                                    seed = idx
                                                 )
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(48.dp)
+                                                        .clip(CircleShape)
+                                                        .clickable { editingAvatarSeatIndex = idx }
+                                                        .testTag("seat_${idx}_avatar_button"),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    PlayerAvatarBadge(
+                                                        avatar = seatAvatar,
+                                                        size = 44.dp,
+                                                        contentDescription = stringResource(
+                                                            R.string.avatar_customize_seat_subtitle,
+                                                            seat.nickname.ifBlank { "Seat ${idx + 1}" }
+                                                        ),
+                                                        showEditBadge = true
+                                                    )
+                                                }
                                             }
                                             Column {
                                                 Text(
@@ -676,6 +721,26 @@ fun GameSetupScreen(
 
         if (showPowerUpGuide) {
             PowerUpGuideDialog(onDismiss = onDismissPowerUpGuide)
+        }
+
+        editingAvatarSeatIndex?.let { seatIdx ->
+            val targetSeat = seats[seatIdx]
+            val initialConfig = PlayerAvatarCodec.resolve(
+                raw = targetSeat.avatarId,
+                fallbackColor = targetSeat.color,
+                isBot = targetSeat.occupancy == SeatOccupancy.BOT,
+                seed = seatIdx
+            )
+            AvatarCustomizerDialog(
+                initialAvatar = initialConfig,
+                title = stringResource(R.string.avatar_studio_title),
+                subtitle = targetSeat.nickname.ifBlank { "Seat ${seatIdx + 1}" },
+                onDismiss = { editingAvatarSeatIndex = null },
+                onSave = { picked ->
+                    seats[seatIdx] = targetSeat.copy(avatarId = picked.encode())
+                    editingAvatarSeatIndex = null
+                }
+            )
         }
     }
 }
