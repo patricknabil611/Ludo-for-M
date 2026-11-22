@@ -235,7 +235,8 @@ data class LegalMove(
     val teleportedToTrackIndex: Int? = null,
     val collectedPowerUp: PowerUpType? = null,
     val collectedTileId: Int? = null,
-    val triggeredBomb: BombTrap? = null
+    val triggeredBomb: BombTrap? = null,
+    val dieValueUsed: Int = stepPath.size
 )
 
 data class TokenRef(
@@ -259,6 +260,10 @@ data class GameState(
     val lastDiceValue: Int? = null,
     val lastRawDiceValue: Int? = null,
     val lastSecondDiceValue: Int? = null,
+    val rolledDice: List<Int> = emptyList(),
+    val remainingDice: List<Int> = emptyList(),
+    val selectedDieValue: Int? = null,
+    val earnedBonusRollThisTurn: Boolean = false,
     val wasDiceDoubled: Boolean = false,
     val wasDoubleDiceRoll: Boolean = false,
     val consecutiveSixes: Int = 0,
@@ -284,6 +289,53 @@ data class GameState(
 
     fun activeSafeTrackIndices(): Set<Int> =
         chaosState.activeSafeTrackIndices ?: LudoBoardGeometry.SAFE_TRACK_INDICES
+
+    /**
+     * Distinct unspent die values that currently have at least one legal token move.
+     */
+    fun playableDiceValues(): List<Int> {
+        if (legalMoves.isEmpty()) return emptyList()
+        val playableSet = legalMoves.map { it.dieValueUsed }.toSet()
+        val ordered = remainingDice.distinct().filter { it in playableSet }
+        return ordered.ifEmpty { playableSet.toList() }
+    }
+
+    /**
+     * Active die value currently targeted by the player for their next token tap.
+     */
+    fun effectiveSelectedDieValue(): Int? {
+        val playable = playableDiceValues()
+        if (playable.isEmpty()) return null
+        return if (selectedDieValue != null && selectedDieValue in playable) {
+            selectedDieValue
+        } else {
+            playable.first()
+        }
+    }
+
+    /**
+     * Legal moves filtered to the currently selected die number (for board highlighting).
+     */
+    fun legalMovesForSelectedDie(): List<LegalMove> {
+        val chosenDie = effectiveSelectedDieValue() ?: return legalMoves
+        return legalMoves.filter { it.dieValueUsed == chosenDie }
+    }
+
+    /**
+     * Resolves the legal move for [tokenRef], preferring the currently selected die value
+     * and gracefully falling back to another remaining die if only that die can move [tokenRef].
+     */
+    fun resolveMoveForToken(tokenRef: TokenRef): LegalMove? {
+        val chosenDie = effectiveSelectedDieValue()
+        if (chosenDie != null) {
+            legalMoves.firstOrNull {
+                it.color == tokenRef.color && it.tokenId == tokenRef.tokenId && it.dieValueUsed == chosenDie
+            }?.let { return it }
+        }
+        return legalMoves.firstOrNull {
+            it.color == tokenRef.color && it.tokenId == tokenRef.tokenId
+        }
+    }
 }
 
 sealed interface RollOutcome {
@@ -312,6 +364,7 @@ data class MoveOutcome(
     val state: GameState,
     val move: LegalMove,
     val grantedExtraRoll: Boolean,
+    val hasRemainingDiceMoves: Boolean = false,
     val playerFinishedRank: Int? = null,
     val triggeredChaosEvent: ChaosEventType? = null,
     val eliminatedPlayer: PlayerColor? = null,

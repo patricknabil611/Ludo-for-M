@@ -170,19 +170,25 @@ class OnlineGameViewModel(
         val prevState = prevRoom?.gameState
 
         _state.update { current ->
+            val mergedGameState = if (!turnAdvanced &&
+                newGameState.phase == TurnPhase.AWAITING_MOVE &&
+                current.gameUiState.gameState.selectedDieValue in newGameState.playableDiceValues()
+            ) {
+                newGameState.copy(selectedDieValue = current.gameUiState.gameState.selectedDieValue)
+            } else {
+                newGameState
+            }
             val nextGameUi = current.gameUiState.copy(
-                gameState = newGameState,
-                powerUpTargeting = if (isLocalTurn && newGameState.phase == TurnPhase.AWAITING_ROLL) {
+                gameState = mergedGameState,
+                powerUpTargeting = if (isLocalTurn && mergedGameState.phase == TurnPhase.AWAITING_ROLL) {
                     current.gameUiState.powerUpTargeting
                 } else null,
-                displayedDiceValue = newGameState.lastRawDiceValue
-                    ?: newGameState.lastDiceValue
+                displayedDiceValue = mergedGameState.lastRawDiceValue
+                    ?: mergedGameState.lastDiceValue
                     ?: current.gameUiState.displayedDiceValue,
-                displayedSecondDiceValue = if (newGameState.activePlayer.doubleDiceActive) {
-                    newGameState.lastSecondDiceValue ?: 6
-                } else {
-                    newGameState.lastSecondDiceValue
-                }
+                displayedSecondDiceValue = mergedGameState.lastSecondDiceValue
+                    ?: current.gameUiState.displayedSecondDiceValue
+                    ?: 6
             )
             current.copy(
                 room = room,
@@ -269,7 +275,7 @@ class OnlineGameViewModel(
                 OnlineActionType.ROLL -> {
                     if (rollAdvanced) {
                         val finalD1 = newState.lastRawDiceValue ?: newState.lastDiceValue ?: 6
-                        val finalD2 = newState.lastSecondDiceValue
+                        val finalD2 = newState.lastSecondDiceValue ?: 6
                         soundManager.playDiceRoll()
                         hapticsManager.vibrateDiceRoll()
                         _state.update {
@@ -659,16 +665,28 @@ class OnlineGameViewModel(
         }
     }
 
+    fun onSelectDieValue(dieValue: Int) {
+        val current = _state.value
+        if (!current.isLocalPlayersTurn || current.isSubmittingAction) return
+        val gs = current.gameUiState.gameState
+        if (gs.phase != TurnPhase.AWAITING_MOVE) return
+        if (dieValue !in gs.playableDiceValues()) return
+        _state.update {
+            it.copy(
+                gameUiState = it.gameUiState.copy(
+                    gameState = gs.copy(selectedDieValue = dieValue)
+                )
+            )
+        }
+    }
+
     fun onTokenTapped(tokenRef: TokenRef) {
         val current = _state.value
         val room = current.room ?: return
         if (!current.isLocalPlayersTurn || current.isSubmittingAction) return
         if (current.gameUiState.gameState.phase != TurnPhase.AWAITING_MOVE) return
 
-        val valid = current.gameUiState.gameState.legalMoves.any {
-            it.color == tokenRef.color && it.tokenId == tokenRef.tokenId
-        }
-        if (!valid) return
+        val chosenMove = current.gameUiState.gameState.resolveMoveForToken(tokenRef) ?: return
 
         viewModelScope.launch {
             _state.update { it.copy(isSubmittingAction = true, errorMessage = null) }
@@ -676,8 +694,9 @@ class OnlineGameViewModel(
                 roomCode = roomCode,
                 actorUid = uid,
                 expectedTurnSeq = room.turnSeq,
-                tokenColor = tokenRef.color,
-                tokenId = tokenRef.tokenId,
+                tokenColor = chosenMove.color,
+                tokenId = chosenMove.tokenId,
+                dieValueUsed = chosenMove.dieValueUsed,
                 asBotCoordinator = false
             )
             _state.update {

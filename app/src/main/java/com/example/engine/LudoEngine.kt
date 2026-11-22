@@ -280,7 +280,8 @@ class LudoEngine(
                         teleportedToTrackIndex = toPortal,
                         collectedPowerUp = tilePickup?.type,
                         collectedTileId = tilePickup?.id,
-                        triggeredBomb = bombHit
+                        triggeredBomb = bombHit,
+                        dieValueUsed = diceValue
                     )
                 }
                 continue
@@ -315,7 +316,8 @@ class LudoEngine(
                     stepPath = steps,
                     capturedTokens = captured,
                     reachesHome = false,
-                    leavesBase = false
+                    leavesBase = false,
+                    dieValueUsed = diceValue
                 )
                 continue
             }
@@ -379,11 +381,41 @@ class LudoEngine(
                     teleportedToTrackIndex = toPortal,
                     collectedPowerUp = tilePickup?.type,
                     collectedTileId = tilePickup?.id,
-                    triggeredBomb = bombHit
+                    triggeredBomb = bombHit,
+                    dieValueUsed = diceValue
                 )
             }
         }
         return moves
+    }
+
+    /**
+     * Computes all legal moves across the distinct remaining die values in [diceValues].
+     */
+    fun computeLegalMovesForDice(
+        state: GameState,
+        diceValues: List<Int>,
+        allowBaseEntryOverride: Boolean = false
+    ): List<LegalMove> {
+        if (diceValues.isEmpty()) return emptyList()
+        val combined = mutableListOf<LegalMove>()
+        for (die in diceValues.distinct()) {
+            combined += computeLegalMoves(
+                state = state,
+                diceValue = die,
+                allowBaseEntryOverride = allowBaseEntryOverride
+            )
+        }
+        return combined
+    }
+
+    /**
+     * Switches which unspent rolled die number the active player wants to move by next.
+     */
+    fun selectDieValue(state: GameState, dieValue: Int): GameState {
+        if (state.isMatchFinished || state.phase != TurnPhase.AWAITING_MOVE) return state
+        if (dieValue !in state.playableDiceValues()) return state
+        return state.copy(selectedDieValue = dieValue)
     }
 
     fun applyDiceRoll(
@@ -426,6 +458,10 @@ class LudoEngine(
                     lastDiceValue = total,
                     lastRawDiceValue = rawDiceValue,
                     lastSecondDiceValue = die2,
+                    rolledDice = listOf(rawDiceValue, die2),
+                    remainingDice = emptyList(),
+                    selectedDieValue = null,
+                    earnedBonusRollThisTurn = false,
                     wasDiceDoubled = false,
                     wasDoubleDiceRoll = true,
                     legalMoves = emptyList(),
@@ -439,6 +475,10 @@ class LudoEngine(
                 lastDiceValue = total,
                 lastRawDiceValue = rawDiceValue,
                 lastSecondDiceValue = die2,
+                rolledDice = listOf(rawDiceValue, die2),
+                remainingDice = listOf(total),
+                selectedDieValue = total,
+                earnedBonusRollThisTurn = (rawDiceValue == 6 && die2 == 6),
                 wasDiceDoubled = false,
                 wasDoubleDiceRoll = true,
                 legalMoves = legalMoves,
@@ -456,8 +496,6 @@ class LudoEngine(
         }
 
         val wasChaosDoubled = activePlayer.diceStormCharges > 0
-        val effectiveDiceValue = if (wasChaosDoubled) minOf(12, rawDiceValue * 2) else rawDiceValue
-
         val consumedPlayers = if (wasChaosDoubled) {
             state.players.mapIndexed { idx, p ->
                 if (idx == state.activePlayerIndex) {
@@ -469,6 +507,92 @@ class LudoEngine(
         }
         val stateAfterCharge = state.copy(players = consumedPlayers)
 
+        // Default 2-dice split-move gameplay across all modes when two dice are rolled
+        if (secondDiceValue != null) {
+            require(secondDiceValue in 1..6) { "Second dice value must be between 1 and 6" }
+            val eff1 = if (wasChaosDoubled) minOf(12, rawDiceValue * 2) else rawDiceValue
+            val eff2 = if (wasChaosDoubled) minOf(12, secondDiceValue * 2) else secondDiceValue
+            val rolledList = listOf(eff1, eff2)
+            val totalSum = eff1 + eff2
+            val rolledAnySix = rawDiceValue == 6 || secondDiceValue == 6
+
+            // Triple-6 streak rule: 3 consecutive 6-rolls cancels the turn
+            if (rolledAnySix && stateAfterCharge.consecutiveSixes + 1 >= ruleSet.maxConsecutiveSixes) {
+                val nextState = stateAfterCharge.copy(
+                    phase = TurnPhase.TURN_CANCELLED_TRIPLE_SIX,
+                    lastDiceValue = totalSum,
+                    lastRawDiceValue = rawDiceValue,
+                    lastSecondDiceValue = secondDiceValue,
+                    rolledDice = rolledList,
+                    remainingDice = emptyList(),
+                    selectedDieValue = null,
+                    earnedBonusRollThisTurn = false,
+                    wasDiceDoubled = wasChaosDoubled,
+                    wasDoubleDiceRoll = false,
+                    consecutiveSixes = stateAfterCharge.consecutiveSixes + 1,
+                    legalMoves = emptyList(),
+                    lastEventMessage = "Triple 6! ${activePlayer.nickname}'s turn is cancelled."
+                )
+                return RollOutcome.TripleSixCancelled(nextState)
+            }
+
+            val legalMoves = computeLegalMovesForDice(stateAfterCharge, rolledList)
+            val rollDesc = if (wasChaosDoubled) {
+                "${rawDiceValue}×2=$eff1 & ${secondDiceValue}×2=$eff2"
+            } else {
+                "$eff1 & $eff2"
+            }
+
+            if (legalMoves.isEmpty()) {
+                val nextState = stateAfterCharge.copy(
+                    phase = TurnPhase.NO_LEGAL_MOVES,
+                    lastDiceValue = totalSum,
+                    lastRawDiceValue = rawDiceValue,
+                    lastSecondDiceValue = secondDiceValue,
+                    rolledDice = rolledList,
+                    remainingDice = emptyList(),
+                    selectedDieValue = null,
+                    earnedBonusRollThisTurn = false,
+                    wasDiceDoubled = wasChaosDoubled,
+                    wasDoubleDiceRoll = false,
+                    legalMoves = emptyList(),
+                    lastEventMessage = "${activePlayer.nickname} rolled $rollDesc — no legal moves."
+                )
+                return RollOutcome.NoLegalMoves(nextState)
+            }
+
+            val initialSelectedDie = legalMoves.first().dieValueUsed
+            val bonusFromRoll = rawDiceValue in ruleSet.extraRollTriggers ||
+                secondDiceValue in ruleSet.extraRollTriggers
+
+            val nextState = stateAfterCharge.copy(
+                phase = TurnPhase.AWAITING_MOVE,
+                lastDiceValue = totalSum,
+                lastRawDiceValue = rawDiceValue,
+                lastSecondDiceValue = secondDiceValue,
+                rolledDice = rolledList,
+                remainingDice = rolledList,
+                selectedDieValue = initialSelectedDie,
+                earnedBonusRollThisTurn = bonusFromRoll,
+                wasDiceDoubled = wasChaosDoubled,
+                wasDoubleDiceRoll = false,
+                legalMoves = legalMoves,
+                lastEventMessage = if (legalMoves.size == 1) {
+                    "${activePlayer.nickname} rolled $rollDesc!"
+                } else {
+                    "${activePlayer.nickname} rolled $rollDesc — pick steps & token!"
+                }
+            )
+            return if (legalMoves.size == 1) {
+                RollOutcome.SingleLegalMove(nextState, legalMoves.first())
+            } else {
+                RollOutcome.MultipleLegalMoves(nextState, legalMoves)
+            }
+        }
+
+        // Single-die fallback (for single-die unit scenarios or tutorial lessons)
+        val effectiveDiceValue = if (wasChaosDoubled) minOf(12, rawDiceValue * 2) else rawDiceValue
+
         // Rule: Rolling three 6s in a row cancels the turn (the third roll is not played).
         if (rawDiceValue == 6 && stateAfterCharge.consecutiveSixes + 1 >= ruleSet.maxConsecutiveSixes) {
             val nextState = stateAfterCharge.copy(
@@ -476,6 +600,10 @@ class LudoEngine(
                 lastDiceValue = effectiveDiceValue,
                 lastRawDiceValue = rawDiceValue,
                 lastSecondDiceValue = null,
+                rolledDice = listOf(effectiveDiceValue),
+                remainingDice = emptyList(),
+                selectedDieValue = null,
+                earnedBonusRollThisTurn = false,
                 wasDiceDoubled = wasChaosDoubled,
                 wasDoubleDiceRoll = false,
                 consecutiveSixes = stateAfterCharge.consecutiveSixes + 1,
@@ -493,6 +621,10 @@ class LudoEngine(
                 lastDiceValue = effectiveDiceValue,
                 lastRawDiceValue = rawDiceValue,
                 lastSecondDiceValue = null,
+                rolledDice = listOf(effectiveDiceValue),
+                remainingDice = emptyList(),
+                selectedDieValue = null,
+                earnedBonusRollThisTurn = false,
                 wasDiceDoubled = wasChaosDoubled,
                 wasDoubleDiceRoll = false,
                 legalMoves = emptyList(),
@@ -507,6 +639,10 @@ class LudoEngine(
             lastDiceValue = effectiveDiceValue,
             lastRawDiceValue = rawDiceValue,
             lastSecondDiceValue = null,
+            rolledDice = listOf(effectiveDiceValue),
+            remainingDice = listOf(effectiveDiceValue),
+            selectedDieValue = effectiveDiceValue,
+            earnedBonusRollThisTurn = rawDiceValue in ruleSet.extraRollTriggers,
             wasDiceDoubled = wasChaosDoubled,
             wasDoubleDiceRoll = false,
             legalMoves = legalMoves,
@@ -535,7 +671,7 @@ class LudoEngine(
         }
         val validMove = state.legalMoves.first {
             it.tokenId == move.tokenId && it.color == move.color && it.toProgress == move.toProgress &&
-                it.toOuterWrap51 == move.toOuterWrap51
+                it.toOuterWrap51 == move.toOuterWrap51 && it.dieValueUsed == move.dieValueUsed
         }
 
         val activeRoller = state.activePlayer
@@ -721,29 +857,76 @@ class LudoEngine(
             )
         }
 
-        // Extra roll check
+        // Extra roll & remaining 2-dice split-move check
         val rawRolled = state.lastRawDiceValue ?: state.lastDiceValue ?: 0
-        val rolledBonusTrigger = if (state.wasDoubleDiceRoll) {
-            // Double Dice: Doubled 6s count as a 6 for extra-roll purposes; triple-6 rule doesn't apply
-            state.lastRawDiceValue == 6 && state.lastSecondDiceValue == 6
-        } else {
-            rawRolled in ruleSet.extraRollTriggers
+        val secondRawRolled = state.lastSecondDiceValue
+        val rolledBonusTrigger = when {
+            state.wasDoubleDiceRoll ->
+                // Power-Up Double Dice: doubled 6s count as 6 for extra-roll; triple-6 doesn't apply
+                state.lastRawDiceValue == 6 && state.lastSecondDiceValue == 6
+            secondRawRolled != null ->
+                rawRolled in ruleSet.extraRollTriggers || secondRawRolled in ruleSet.extraRollTriggers
+            else ->
+                rawRolled in ruleSet.extraRollTriggers
         }
         val captureBonus = bombTriggered == null &&
             ruleSet.extraRollOnCapture && validMove.capturedTokens.isNotEmpty()
         val homeBonus = ruleSet.extraRollOnHome && validMove.reachesHome
+        val updatedActiveRoller = updatedPlayers[state.activePlayerIndex]
         val activeStillHasMoves = if (ruleSet.teamsMode) {
-            !activeRoller.allTokensHome ||
-                updatedPlayers.first { it.color == activeRoller.color.opposite() }.allTokensHome.not()
+            !updatedActiveRoller.allTokensHome ||
+                updatedPlayers.first { it.color == updatedActiveRoller.color.opposite() }.allTokensHome.not()
         } else {
             !movedPlayer.allTokensHome
         }
-        val getsExtraRoll = activeStillHasMoves && (rolledBonusTrigger || captureBonus || homeBonus)
+        val bonusEarned = state.earnedBonusRollThisTurn || rolledBonusTrigger || captureBonus || homeBonus
+
+        // Remove ONE occurrence of the spent die value from remainingDice
+        val nextRemainingDice = removeFirstOccurrence(state.remainingDice, validMove.dieValueUsed)
+        if (nextRemainingDice.isNotEmpty() && activeStillHasMoves) {
+            val midState = state.copy(
+                players = updatedPlayers,
+                powerUpState = updatedPowerUpState,
+                finishOrder = updatedFinishOrder,
+                remainingDice = nextRemainingDice,
+                earnedBonusRollThisTurn = bonusEarned
+            )
+            val nextLegalMoves = computeLegalMovesForDice(midState, nextRemainingDice)
+            if (nextLegalMoves.isNotEmpty()) {
+                val nextSelectedDie = nextLegalMoves.first().dieValueUsed
+                val nextStepsLabel = nextRemainingDice.joinToString(" & ")
+                val prefix = when {
+                    bombTriggered != null -> "BOOM! Bomb Trap! "
+                    actualCollectedPowerUp != null -> "Got ${actualCollectedPowerUp.title}! "
+                    validMove.capturedTokens.isNotEmpty() -> "Captured! "
+                    validMove.reachesHome -> "Home! "
+                    else -> ""
+                }
+                val continueTurnState = midState.copy(
+                    phase = TurnPhase.AWAITING_MOVE,
+                    legalMoves = nextLegalMoves,
+                    selectedDieValue = nextSelectedDie,
+                    lastEventMessage = "$prefix${activeRoller.nickname} now plays $nextStepsLabel!"
+                )
+                return MoveOutcome(
+                    state = continueTurnState,
+                    move = validMove,
+                    grantedExtraRoll = false,
+                    hasRemainingDiceMoves = true,
+                    playerFinishedRank = newlyAssignedRank,
+                    collectedPowerUp = actualCollectedPowerUp,
+                    triggeredBomb = bombTriggered
+                )
+            }
+        }
+
+        val getsExtraRoll = activeStillHasMoves && bonusEarned
 
         if (getsExtraRoll) {
+            val anyRawSix = rawRolled == 6 || secondRawRolled == 6
             val newConsecutiveSixes = when {
-                state.wasDoubleDiceRoll -> 0 // Triple-6 rule doesn't apply to Double Dice
-                rawRolled == 6 -> state.consecutiveSixes + 1
+                state.wasDoubleDiceRoll -> 0 // Triple-6 rule doesn't apply to Double Dice power-up
+                anyRawSix -> state.consecutiveSixes + 1
                 else -> 0
             }
             val eventMsg = when {
@@ -769,6 +952,10 @@ class LudoEngine(
                 lastDiceValue = null,
                 lastRawDiceValue = null,
                 lastSecondDiceValue = null,
+                rolledDice = emptyList(),
+                remainingDice = emptyList(),
+                selectedDieValue = null,
+                earnedBonusRollThisTurn = false,
                 wasDiceDoubled = false,
                 wasDoubleDiceRoll = false,
                 consecutiveSixes = newConsecutiveSixes,
@@ -780,6 +967,7 @@ class LudoEngine(
                 state = nextState,
                 move = validMove,
                 grantedExtraRoll = true,
+                hasRemainingDiceMoves = false,
                 playerFinishedRank = newlyAssignedRank,
                 collectedPowerUp = actualCollectedPowerUp,
                 triggeredBomb = bombTriggered
@@ -793,6 +981,10 @@ class LudoEngine(
             lastDiceValue = null,
             lastRawDiceValue = null,
             lastSecondDiceValue = null,
+            rolledDice = emptyList(),
+            remainingDice = emptyList(),
+            selectedDieValue = null,
+            earnedBonusRollThisTurn = false,
             wasDiceDoubled = false,
             wasDoubleDiceRoll = false,
             consecutiveSixes = 0,
@@ -910,6 +1102,10 @@ class LudoEngine(
             lastDiceValue = null,
             lastRawDiceValue = null,
             lastSecondDiceValue = null,
+            rolledDice = emptyList(),
+            remainingDice = emptyList(),
+            selectedDieValue = null,
+            earnedBonusRollThisTurn = false,
             wasDiceDoubled = false,
             wasDoubleDiceRoll = false,
             consecutiveSixes = 0,
@@ -1398,6 +1594,19 @@ class LudoEngine(
             .map { it.color }
         val eliminatedReversed = eliminatedOrder.reversed().filter { it !in finishOrder }
         return aliveUnfinished + eliminatedReversed
+    }
+
+    private fun removeFirstOccurrence(list: List<Int>, target: Int): List<Int> {
+        var removed = false
+        return buildList(list.size) {
+            for (v in list) {
+                if (!removed && v == target) {
+                    removed = true
+                } else {
+                    add(v)
+                }
+            }
+        }
     }
 
     private fun teamNameFor(color: PlayerColor): String = when (color) {

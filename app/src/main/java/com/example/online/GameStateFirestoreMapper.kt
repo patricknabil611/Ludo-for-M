@@ -43,11 +43,15 @@ object GameStateFirestoreMapper {
             "lastEventMessage" to state.lastEventMessage.take(160),
             "players" to state.players.map { playerToMap(it) },
             "chaosState" to chaosToMap(state.chaosState),
-            "powerUpState" to powerUpToMap(state.powerUpState)
+            "powerUpState" to powerUpToMap(state.powerUpState),
+            "rolledDice" to state.rolledDice,
+            "remainingDice" to state.remainingDice,
+            "earnedBonusRollThisTurn" to state.earnedBonusRollThisTurn
         )
         state.lastDiceValue?.let { map["lastDiceValue"] = it }
         state.lastRawDiceValue?.let { map["lastRawDiceValue"] = it }
         state.lastSecondDiceValue?.let { map["lastSecondDiceValue"] = it }
+        state.selectedDieValue?.let { map["selectedDieValue"] = it }
         state.winningTeamLabel?.let { map["winningTeamLabel"] = it }
         return map
     }
@@ -73,6 +77,13 @@ object GameStateFirestoreMapper {
             PlayerColor.entries.firstOrNull { it.name == name as? String }
         }
 
+        val rolledDice = (raw["rolledDice"] as? List<*>).orEmpty()
+            .mapNotNull { (it as? Number)?.toInt() }
+        val remainingDice = (raw["remainingDice"] as? List<*>).orEmpty()
+            .mapNotNull { (it as? Number)?.toInt() }
+        val selectedDieValue = (raw["selectedDieValue"] as? Number)?.toInt()
+        val earnedBonusRoll = (raw["earnedBonusRollThisTurn"] as? Boolean) ?: false
+
         val baseState = GameState(
             mode = mode,
             players = players,
@@ -81,6 +92,10 @@ object GameStateFirestoreMapper {
             lastDiceValue = lastDice,
             lastRawDiceValue = lastRawDice,
             lastSecondDiceValue = lastSecondDice,
+            rolledDice = rolledDice,
+            remainingDice = remainingDice,
+            selectedDieValue = selectedDieValue,
+            earnedBonusRollThisTurn = earnedBonusRoll,
             wasDiceDoubled = (raw["wasDiceDoubled"] as? Boolean) ?: false,
             wasDoubleDiceRoll = wasDoubleDice,
             consecutiveSixes = (raw["consecutiveSixes"] as? Number)?.toInt() ?: 0,
@@ -98,15 +113,35 @@ object GameStateFirestoreMapper {
         )
 
         // Recompute authoritative legal moves deterministically when awaiting a move
-        val computedMoves: List<LegalMove> = if (phase == TurnPhase.AWAITING_MOVE && lastDice != null) {
+        val computedMoves: List<LegalMove> = if (phase == TurnPhase.AWAITING_MOVE) {
             val engine = LudoEngine(RuleSetRegistry.forMode(mode))
             val allowBaseOverride = wasDoubleDice && lastRawDice == 6 && lastSecondDice == 6
-            engine.computeLegalMoves(baseState, lastDice, allowBaseEntryOverride = allowBaseOverride)
+            when {
+                remainingDice.isNotEmpty() ->
+                    engine.computeLegalMovesForDice(baseState, remainingDice, allowBaseEntryOverride = allowBaseOverride)
+                lastDice != null ->
+                    engine.computeLegalMoves(baseState, lastDice, allowBaseEntryOverride = allowBaseOverride)
+                else -> emptyList()
+            }
         } else {
             emptyList()
         }
 
-        return baseState.copy(legalMoves = computedMoves)
+        val resolvedSelectedDie = if (computedMoves.isNotEmpty()) {
+            val playable = computedMoves.map { it.dieValueUsed }.toSet()
+            if (selectedDieValue != null && selectedDieValue in playable) {
+                selectedDieValue
+            } else {
+                computedMoves.first().dieValueUsed
+            }
+        } else {
+            null
+        }
+
+        return baseState.copy(
+            legalMoves = computedMoves,
+            selectedDieValue = resolvedSelectedDie
+        )
     }
 
     private fun playerToMap(player: PlayerState): Map<String, Any> = mapOf(

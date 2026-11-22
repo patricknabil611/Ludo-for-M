@@ -565,6 +565,7 @@ class MainActivity : ComponentActivity() {
                                         onlineLoading = wrapper.room == null && !wrapper.isRoomClosed,
                                         onlineErrorMessage = wrapper.errorMessage,
                                         onRollDice = { onlineGameVm.onRollDiceTapped() },
+                                        onSelectDieValue = { onlineGameVm.onSelectDieValue(it) },
                                         onTokenTapped = { onlineGameVm.onTokenTapped(it) },
                                         onPause = { onlineGameVm.pauseMenuOpen(true) },
                                         onResume = { onlineGameVm.pauseMenuOpen(false) },
@@ -673,6 +674,7 @@ class MainActivity : ComponentActivity() {
                             onDiceRollResult = { first, second ->
                                 gameViewModel.onHumanDiceRollCompleted(first, second)
                             },
+                            onSelectDieValue = { dieVal -> gameViewModel.onSelectDieValue(dieVal) },
                             onTokenTapped = { tokenRef -> gameViewModel.onTokenTapped(tokenRef) },
                             onPause = { gameViewModel.pauseGame() },
                             onResume = { gameViewModel.resumeGame() },

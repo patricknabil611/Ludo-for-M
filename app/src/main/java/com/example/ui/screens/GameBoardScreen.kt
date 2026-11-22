@@ -28,6 +28,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Gavel
@@ -116,6 +117,7 @@ fun GameBoardScreen(
     onRollDice: () -> Unit,
     onDiceRollStarted: (() -> Unit)? = null,
     onDiceRollResult: ((Int, Int?) -> Unit)? = null,
+    onSelectDieValue: (Int) -> Unit = {},
     onTokenTapped: (TokenRef) -> Unit,
     onPause: () -> Unit,
     onResume: () -> Unit,
@@ -599,8 +601,18 @@ fun GameBoardScreen(
 
             Spacer(Modifier.height(8.dp))
 
-            // Bottom Dice & Active Turn Prompt Bar
-            val showDoubleDice = activePlayer.doubleDiceActive || uiState.displayedSecondDiceValue != null
+            // Bottom 2-Dice & Active Turn Prompt Bar
+            val playableDice = gameState.playableDiceValues()
+            val activeSelectedDie = gameState.effectiveSelectedDieValue()
+            val canChooseDieStep = !uiState.isPaused &&
+                !uiState.isDiceRolling &&
+                !uiState.isAnimatingMove &&
+                !activePlayer.setup.isBot &&
+                isLocalPlayersTurn &&
+                gameState.phase == TurnPhase.AWAITING_MOVE &&
+                !gameState.wasDoubleDiceRoll &&
+                gameState.rolledDice.size >= 2
+
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(24.dp),
@@ -640,23 +652,28 @@ fun GameBoardScreen(
                                 "Tap one of your tokens to Shield!"
                             uiState.powerUpTargeting is PowerUpTargetingState.BombPlacement ->
                                 "Tap a glowing square to hide your Bomb!"
-                            uiState.isDiceRolling ->
-                                if (showDoubleDice) "Rolling two dice..." else "Rolling..."
+                            uiState.isDiceRolling -> "Rolling two dice..."
                             uiState.isAnimatingMove -> "Hopping..."
                             activePlayer.setup.isBot && gameState.phase == TurnPhase.AWAITING_ROLL ->
                                 "Bot is thinking..."
                             activePlayer.setup.isBot && gameState.phase == TurnPhase.AWAITING_MOVE ->
-                                "Bot is picking a token..."
+                                "Bot is choosing steps & token..."
                             isOnlineMode && !isLocalPlayersTurn ->
                                 "Waiting for ${activePlayer.nickname}..."
                             gameState.phase == TurnPhase.AWAITING_ROLL -> when {
-                                activePlayer.doubleDiceActive -> "Double Dice armed! Tap to roll both!"
-                                partnerName != null -> "Tap die to roll for $partnerName!"
+                                activePlayer.doubleDiceActive -> "Double Dice armed! Tap to roll combined!"
+                                partnerName != null -> "Tap dice to roll for $partnerName!"
                                 gameState.mode == GameModeId.POWER_UP && activePlayer.heldPowerUps.isNotEmpty() ->
-                                    "Use a power-up or tap the die!"
-                                else -> "Tap the die to roll!"
+                                    "Use a power-up or tap the dice!"
+                                else -> "Tap the dice to roll!"
                             }
-                            gameState.phase == TurnPhase.AWAITING_MOVE -> "Tap a glowing token!"
+                            gameState.phase == TurnPhase.AWAITING_MOVE -> when {
+                                playableDice.size >= 2 && activeSelectedDie != null ->
+                                    "Pick steps (${playableDice.joinToString(" or ")}) & tap a token!"
+                                activeSelectedDie != null ->
+                                    "Move $activeSelectedDie steps — tap a token!"
+                                else -> "Tap a glowing token!"
+                            }
                             gameState.phase == TurnPhase.TURN_CANCELLED_TRIPLE_SIX -> "Three 6s! Turn cancelled!"
                             gameState.phase == TurnPhase.NO_LEGAL_MOVES -> "No legal moves..."
                             else -> "Match complete!"
@@ -668,7 +685,22 @@ fun GameBoardScreen(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        if (turnCycle.size > 1) {
+                        if (gameState.phase == TurnPhase.AWAITING_MOVE &&
+                            !gameState.wasDoubleDiceRoll &&
+                            gameState.rolledDice.size >= 2
+                        ) {
+                            Spacer(Modifier.height(6.dp))
+                            DieStepSelectorRow(
+                                rolledDice = gameState.rolledDice,
+                                remainingDice = gameState.remainingDice,
+                                selectedDieValue = activeSelectedDie,
+                                playableDiceValues = playableDice,
+                                activeColor = activePlayer.color,
+                                enabled = canChooseDieStep,
+                                onSelectDieValue = onSelectDieValue,
+                                modifier = Modifier.testTag("die_step_selector_row")
+                            )
+                        } else if (turnCycle.size > 1) {
                             Spacer(Modifier.height(5.dp))
                             TurnOrderCycleStrip(
                                 cycle = turnCycle,
@@ -761,37 +793,26 @@ fun GameBoardScreen(
                             gameState.phase == TurnPhase.AWAITING_ROLL
 
                         val useSelfRollingDice = !isOnlineMode && onDiceRollResult != null
-                        if (showDoubleDice) {
-                            LudoDoubleDice3D(
-                                firstValue = uiState.displayedDiceValue,
-                                secondValue = uiState.displayedSecondDiceValue ?: 6,
-                                rollTrigger = uiState.diceRollTrigger,
-                                isRolling = uiState.isDiceRolling,
-                                canRoll = canRoll,
-                                activeColor = activePlayer.color,
-                                onRollClick = onRollDice,
-                                onRollStarted = if (useSelfRollingDice) onDiceRollStarted else null,
-                                onDoubleRollResult = if (useSelfRollingDice) {
-                                    { v1, v2 -> onDiceRollResult.invoke(v1, v2) }
-                                } else null,
-                                dieSize = 58.dp
-                            )
-                        } else {
-                            LudoDice3D(
-                                value = uiState.displayedDiceValue,
-                                rollTrigger = uiState.diceRollTrigger,
-                                isRolling = uiState.isDiceRolling,
-                                canRoll = canRoll,
-                                activeColor = activePlayer.color,
-                                onRollClick = onRollDice,
-                                onRollStarted = if (useSelfRollingDice) onDiceRollStarted else null,
-                                onRollResult = if (useSelfRollingDice) {
-                                    { rolled -> onDiceRollResult.invoke(rolled, null) }
-                                } else null,
-                                size = 72.dp,
-                                testTag = "dice_roll_button"
-                            )
-                        }
+                        LudoDoubleDice3D(
+                            firstValue = uiState.displayedDiceValue,
+                            secondValue = uiState.displayedSecondDiceValue ?: 6,
+                            rollTrigger = uiState.diceRollTrigger,
+                            isRolling = uiState.isDiceRolling,
+                            canRoll = canRoll,
+                            activeColor = activePlayer.color,
+                            rolledDice = gameState.rolledDice,
+                            remainingDice = gameState.remainingDice,
+                            selectedDieValue = activeSelectedDie,
+                            playableDiceValues = playableDice,
+                            canSelectDie = canChooseDieStep,
+                            onSelectDieValue = onSelectDieValue,
+                            onRollClick = onRollDice,
+                            onRollStarted = if (useSelfRollingDice) onDiceRollStarted else null,
+                            onDoubleRollResult = if (useSelfRollingDice) {
+                                { v1, v2 -> onDiceRollResult.invoke(v1, v2) }
+                            } else null,
+                            dieSize = 56.dp
+                        )
                     }
                 }
             }
@@ -1065,4 +1086,92 @@ private fun TurnOrderCycleStrip(
         }
     }
 }
+
+@Composable
+private fun DieStepSelectorRow(
+    rolledDice: List<Int>,
+    remainingDice: List<Int>,
+    selectedDieValue: Int?,
+    playableDiceValues: List<Int>,
+    activeColor: PlayerColor,
+    enabled: Boolean,
+    onSelectDieValue: (Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val palette = activeColor.palette()
+    val remainingCounts = remainingDice.groupingBy { it }.eachCount().toMutableMap()
+    val slotRemaining = rolledDice.map { value ->
+        val left = remainingCounts[value] ?: 0
+        if (left > 0) {
+            remainingCounts[value] = left - 1
+            true
+        } else {
+            false
+        }
+    }
+    var highlightedSelectedOnce = false
+
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        rolledDice.forEachIndexed { idx, steps ->
+            val isRemaining = slotRemaining[idx]
+            val isPlayable = isRemaining && steps in playableDiceValues
+            val isSelected = isPlayable && selectedDieValue == steps && !highlightedSelectedOnce
+            if (isSelected) highlightedSelectedOnce = true
+
+            val containerColor = when {
+                !isRemaining -> Color(0xFFF1F3F5)
+                isSelected -> palette.primary
+                isPlayable -> palette.light
+                else -> Color(0xFFF5F5F5)
+            }
+            val borderColor = when {
+                !isRemaining -> InkMuted.copy(alpha = 0.28f)
+                isSelected -> palette.dark
+                isPlayable -> palette.primary
+                else -> InkMuted.copy(alpha = 0.25f)
+            }
+            val textColor = when {
+                !isRemaining -> InkMuted.copy(alpha = 0.65f)
+                isSelected -> Color.White
+                isPlayable -> InkDark
+                else -> InkMuted.copy(alpha = 0.55f)
+            }
+
+            Surface(
+                onClick = { if (enabled && isPlayable) onSelectDieValue(steps) },
+                enabled = enabled && isPlayable,
+                shape = RoundedCornerShape(12.dp),
+                color = containerColor,
+                border = BorderStroke(if (isSelected) 2.dp else 1.5.dp, borderColor),
+                modifier = Modifier.testTag("die_step_chip_${idx}_$steps")
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    if (!isRemaining) {
+                        Icon(
+                            imageVector = Icons.Filled.Check,
+                            contentDescription = "Used die",
+                            tint = MintGreenDark,
+                            modifier = Modifier.size(13.dp)
+                        )
+                    }
+                    Text(
+                        text = if (steps == 1) "1 step" else "$steps steps",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = textColor,
+                        fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Bold
+                    )
+                }
+            }
+        }
+    }
+}
+
 

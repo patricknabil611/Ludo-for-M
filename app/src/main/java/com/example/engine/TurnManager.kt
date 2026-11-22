@@ -113,7 +113,8 @@ object TurnManager {
             it.tokenId == move.tokenId &&
                 it.color == move.color &&
                 it.toProgress == move.toProgress &&
-                it.toOuterWrap51 == move.toOuterWrap51
+                it.toOuterWrap51 == move.toOuterWrap51 &&
+                it.dieValueUsed == move.dieValueUsed
         }
         if (!isLegal) {
             return TurnGuardResult.IllegalTokenMove(TokenRef(move.color, move.tokenId))

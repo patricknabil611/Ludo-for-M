@@ -356,7 +356,7 @@ private fun buildRenderTokens(
 ): List<RenderToken> {
     val allowInteractiveHighlights = isLocalPlayersTurn && !gameState.activePlayer.setup.isBot
     val movableSet = if (allowInteractiveHighlights && gameState.phase == TurnPhase.AWAITING_MOVE) {
-        gameState.legalMoves.map { TokenRef(it.color, it.tokenId) }.toSet()
+        gameState.legalMovesForSelectedDie().map { TokenRef(it.color, it.tokenId) }.toSet()
     } else {
         emptySet()
     }

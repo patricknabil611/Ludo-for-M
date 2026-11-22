@@ -10,13 +10,16 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -29,6 +32,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -486,9 +490,11 @@ fun LudoDice3D(
 }
 
 /**
- * Synchronized pair of 3D animated dice for Power-Up mode's Double Dice ability.
- * Generates two random 1..6 values in self-rolling mode and commits both together,
- * or animates synced externally provided values for bots & online matches.
+ * Synchronized pair of 3D animated dice used as the default dice control across all game modes.
+ *
+ * - During `AWAITING_ROLL`: tapping either die tumbles both cubes in 3D and emits `(die1, die2)`.
+ * - During `AWAITING_MOVE`: shows which die is spent (dimmed) vs active/selected (ringed), and
+ *   tapping an unspent playable die lets the player pick that die's number of steps!
  */
 @Composable
 fun LudoDoubleDice3D(
@@ -498,11 +504,17 @@ fun LudoDoubleDice3D(
     isRolling: Boolean,
     canRoll: Boolean,
     activeColor: PlayerColor,
+    rolledDice: List<Int> = emptyList(),
+    remainingDice: List<Int> = emptyList(),
+    selectedDieValue: Int? = null,
+    playableDiceValues: List<Int> = emptyList(),
+    canSelectDie: Boolean = false,
+    onSelectDieValue: ((Int) -> Unit)? = null,
     onRollClick: () -> Unit = {},
     onRollStarted: (() -> Unit)? = null,
     onDoubleRollResult: ((Int, Int) -> Unit)? = null,
     random: Random = Random.Default,
-    dieSize: Dp = 58.dp,
+    dieSize: Dp = 56.dp,
     modifier: Modifier = Modifier
 ) {
     var localTrigger by remember { mutableIntStateOf(0) }
@@ -514,6 +526,7 @@ fun LudoDoubleDice3D(
     val latestOnStarted by rememberUpdatedState(onRollStarted)
     val latestOnResult by rememberUpdatedState(onDoubleRollResult)
     val latestOnClick by rememberUpdatedState(onRollClick)
+    val palette = activeColor.palette()
 
     val triggerDoubleRoll: () -> Unit = {
         val resultCallback = latestOnResult
@@ -541,31 +554,83 @@ fun LudoDoubleDice3D(
     val shownFirst = if (localRolling) localFirst else firstValue.coerceIn(1, 6)
     val shownSecond = if (localRolling) localSecond else secondValue.coerceIn(1, 6)
 
+    // Determine remaining/spent status for Die 0 and Die 1 (handles doubles like [6, 6] accurately)
+    val die0Effective = rolledDice.getOrNull(0) ?: shownFirst
+    val die1Effective = rolledDice.getOrNull(1) ?: shownSecond
+    val (die0Remaining, die1Remaining) = if (rolledDice.size >= 2) {
+        val remCounts = remainingDice.groupingBy { it }.eachCount().toMutableMap()
+        val firstRem = (remCounts[die0Effective] ?: 0) > 0
+        if (firstRem) remCounts[die0Effective] = (remCounts[die0Effective] ?: 1) - 1
+        val secondRem = (remCounts[die1Effective] ?: 0) > 0
+        firstRem to secondRem
+    } else {
+        true to true
+    }
+
+    val isMovePhaseVisual = canSelectDie && !isRolling && !localRolling && rolledDice.size >= 2
+    val die0Playable = isMovePhaseVisual && die0Remaining && die0Effective in playableDiceValues
+    val die1Playable = isMovePhaseVisual && die1Remaining && die1Effective in playableDiceValues
+    val die0Selected = die0Playable && selectedDieValue == die0Effective
+    val die1Selected = die1Playable && selectedDieValue == die1Effective &&
+        !(die0Selected && die0Effective == die1Effective)
+
     Row(
         modifier = modifier,
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        LudoDice3D(
-            value = shownFirst,
-            rollTrigger = effectiveTrigger,
-            isRolling = isRolling || localRolling,
-            canRoll = canRoll,
-            activeColor = activeColor,
-            onRollClick = triggerDoubleRoll,
-            size = dieSize,
-            testTag = "dice_roll_button"
-        )
-        LudoDice3D(
-            value = shownSecond,
-            rollTrigger = effectiveTrigger,
-            isRolling = isRolling || localRolling,
-            canRoll = canRoll,
-            activeColor = activeColor,
-            onRollClick = triggerDoubleRoll,
-            size = dieSize,
-            testTag = "dice_roll_button_2"
-        )
+        Box(
+            modifier = Modifier
+                .then(
+                    if (die0Selected) {
+                        Modifier.border(2.5.dp, palette.primary, RoundedCornerShape(16.dp))
+                    } else Modifier
+                )
+                .padding(2.dp)
+                .alpha(if (isMovePhaseVisual && !die0Remaining) 0.38f else 1f)
+                .then(
+                    if (die0Playable && onSelectDieValue != null) {
+                        Modifier.clickable { onSelectDieValue(die0Effective) }
+                    } else Modifier
+                )
+        ) {
+            LudoDice3D(
+                value = shownFirst,
+                rollTrigger = effectiveTrigger,
+                isRolling = isRolling || localRolling,
+                canRoll = canRoll,
+                activeColor = activeColor,
+                onRollClick = triggerDoubleRoll,
+                size = dieSize,
+                testTag = "dice_roll_button"
+            )
+        }
+        Box(
+            modifier = Modifier
+                .then(
+                    if (die1Selected) {
+                        Modifier.border(2.5.dp, palette.primary, RoundedCornerShape(16.dp))
+                    } else Modifier
+                )
+                .padding(2.dp)
+                .alpha(if (isMovePhaseVisual && !die1Remaining) 0.38f else 1f)
+                .then(
+                    if (die1Playable && onSelectDieValue != null) {
+                        Modifier.clickable { onSelectDieValue(die1Effective) }
+                    } else Modifier
+                )
+        ) {
+            LudoDice3D(
+                value = shownSecond,
+                rollTrigger = effectiveTrigger,
+                isRolling = isRolling || localRolling,
+                canRoll = canRoll,
+                activeColor = activeColor,
+                onRollClick = triggerDoubleRoll,
+                size = dieSize,
+                testTag = "dice_roll_button_2"
+            )
+        }
     }
 }
 

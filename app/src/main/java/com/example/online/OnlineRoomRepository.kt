@@ -624,25 +624,13 @@ class OnlineRoomRepository(
                 )
                 val nextRollSeq = room.rollSeq + 1
                 val serverSec = room.turnStartedAt?.seconds ?: 0L
-                val isDouble = state.activePlayer.doubleDiceActive
-
-                val (die1, die2) = if (isDouble) {
-                    FairDiceRoller.computeDoubleRoll(
-                        roomCode = room.roomCode,
-                        diceSeed = room.diceSeed,
-                        rollSeq = nextRollSeq,
-                        turnStartedAtSeconds = serverSec,
-                        activeColor = activeColor
-                    )
-                } else {
-                    FairDiceRoller.computeSingleRoll(
-                        roomCode = room.roomCode,
-                        diceSeed = room.diceSeed,
-                        rollSeq = nextRollSeq,
-                        turnStartedAtSeconds = serverSec,
-                        activeColor = activeColor
-                    ) to null
-                }
+                val (die1, die2) = FairDiceRoller.computeDoubleRoll(
+                    roomCode = room.roomCode,
+                    diceSeed = room.diceSeed,
+                    rollSeq = nextRollSeq,
+                    turnStartedAtSeconds = serverSec,
+                    activeColor = activeColor
+                )
 
                 val outcome = engine.applyDiceRoll(state, die1, die2)
                 val updatedSeats = room.seats.map { seat ->
@@ -680,11 +668,7 @@ class OnlineRoomRepository(
                     }
                     is RollOutcome.SingleLegalMove, is RollOutcome.MultipleLegalMoves -> {
                         finalState = outcome.state
-                        summary = if (die2 != null) {
-                            "${state.activePlayer.nickname} rolled $die1 + $die2!"
-                        } else {
-                            "${state.activePlayer.nickname} rolled $die1!"
-                        }
+                        summary = "${state.activePlayer.nickname} rolled $die1 & $die2!"
                     }
                 }
 
@@ -728,6 +712,7 @@ class OnlineRoomRepository(
         expectedTurnSeq: Int,
         tokenColor: PlayerColor,
         tokenId: Int,
+        dieValueUsed: Int? = null,
         asBotCoordinator: Boolean = false
     ): Result<Unit> {
         val code = roomCode.trim().uppercase()
@@ -748,7 +733,13 @@ class OnlineRoomRepository(
                 }
                 if (!authorized) return@runTransaction
 
-                val move = state.legalMoves.firstOrNull {
+                val move = (if (dieValueUsed != null) {
+                    state.legalMoves.firstOrNull {
+                        it.color == tokenColor && it.tokenId == tokenId && it.dieValueUsed == dieValueUsed
+                    }
+                } else {
+                    null
+                }) ?: state.legalMoves.firstOrNull {
                     it.color == tokenColor && it.tokenId == tokenId
                 } ?: return@runTransaction
 
@@ -1138,6 +1129,7 @@ class OnlineRoomRepository(
                     expectedTurnSeq = expectedTurnSeq,
                     tokenColor = chosen.color,
                     tokenId = chosen.tokenId,
+                    dieValueUsed = chosen.dieValueUsed,
                     asBotCoordinator = true
                 )
             }

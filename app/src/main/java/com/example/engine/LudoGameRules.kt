@@ -5,6 +5,7 @@ package com.example.engine
  */
 interface LudoRuleSet {
     val modeId: GameModeId
+    val diceCount: Int
     val tokensPerPlayer: Int
     val startOnTrack: Boolean
     val entryRolls: Set<Int>
@@ -25,6 +26,7 @@ interface LudoRuleSet {
 open class BaseRuleSet(
     override val modeId: GameModeId
 ) : LudoRuleSet {
+    override val diceCount: Int = 2
     override val tokensPerPlayer: Int = 4
     override val startOnTrack: Boolean = false
     override val entryRolls: Set<Int> = setOf(6)

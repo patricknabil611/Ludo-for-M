@@ -76,7 +76,7 @@ data class GameUiState(
     val timerProgress: Float = 1f,
     val isDiceRolling: Boolean = false,
     val displayedDiceValue: Int = 6,
-    val displayedSecondDiceValue: Int? = null,
+    val displayedSecondDiceValue: Int? = 6,
     val diceRollTrigger: Int = 0,
     val isAnimatingMove: Boolean = false,
     val animatingToken: TokenRef? = null,
@@ -451,12 +451,7 @@ class GameViewModel(
             return
         }
         val cleanFirst = rolledValue.coerceIn(1, 6)
-        val isDoubleDice = current.gameState.activePlayer.doubleDiceActive
-        val cleanSecond = if (isDoubleDice) {
-            (secondRolledValue ?: DiceCube3DEngine.rollRandomFace(diceRandom)).coerceIn(1, 6)
-        } else {
-            null
-        }
+        val cleanSecond = (secondRolledValue ?: DiceCube3DEngine.rollRandomFace(diceRandom)).coerceIn(1, 6)
 
         _uiState.update {
             it.copy(
@@ -473,6 +468,23 @@ class GameViewModel(
                 rolledValue2 = cleanSecond,
                 isBot = false
             )
+        }
+    }
+
+    fun onSelectDieValue(dieValue: Int) {
+        val current = _uiState.value
+        if (current.isPaused ||
+            current.isGuideOverlayVisible ||
+            current.isDiceRolling ||
+            current.isAnimatingMove ||
+            current.gameState.activePlayer.setup.isBot ||
+            current.gameState.phase != TurnPhase.AWAITING_MOVE
+        ) {
+            return
+        }
+        val updated = engine.selectDieValue(current.gameState, dieValue)
+        if (updated !== current.gameState) {
+            _uiState.update { it.copy(gameState = updated) }
         }
     }
 
@@ -513,9 +525,7 @@ class GameViewModel(
         )
         if (!guard.isAllowed) return
 
-        val move = current.gameState.legalMoves.firstOrNull {
-            it.color == tokenRef.color && it.tokenId == tokenRef.tokenId
-        } ?: return
+        val move = current.gameState.resolveMoveForToken(tokenRef) ?: return
 
         turnActionJob?.cancel()
         turnActionJob = viewModelScope.launch {
@@ -651,9 +661,8 @@ class GameViewModel(
     }
 
     private suspend fun executeDiceRollAndTurnFlow(isBot: Boolean) {
-        val isDoubleDice = _uiState.value.gameState.activePlayer.doubleDiceActive
         val rolledValue1 = DiceCube3DEngine.rollRandomFace(diceRandom)
-        val rolledValue2 = if (isDoubleDice) DiceCube3DEngine.rollRandomFace(diceRandom) else null
+        val rolledValue2 = DiceCube3DEngine.rollRandomFace(diceRandom)
 
         soundManager.playDiceRoll()
         hapticsManager.vibrateDiceRoll()
@@ -887,11 +896,55 @@ class GameViewModel(
                     isAnimatingMove = false,
                     animatingToken = null,
                     hopScale = 1f,
-                    displayedSecondDiceValue = null,
                     powerUpTargeting = null
                 )
             }
             clearSavedState()
+        } else if (outcome.hasRemainingDiceMoves) {
+            // Same player still has another rolled die number left to play this turn
+            _uiState.update {
+                it.copy(
+                    gameState = outcome.state,
+                    isAnimatingMove = false,
+                    animatingToken = null,
+                    hopScale = 1f,
+                    powerUpTargeting = null
+                )
+            }
+            persistCurrentState(outcome.state)
+
+            val isBotTurn = outcome.state.activePlayer.setup.isBot
+            if (isBotTurn) {
+                delayWhileUnpaused(850L)
+                val snapshot = _uiState.value.gameState
+                if (!snapshot.isMatchFinished &&
+                    snapshot.phase == TurnPhase.AWAITING_MOVE &&
+                    snapshot.activePlayer.setup.isBot &&
+                    snapshot.legalMoves.isNotEmpty()
+                ) {
+                    val nextBotMove = if (snapshot.legalMoves.size == 1) {
+                        snapshot.legalMoves.first()
+                    } else {
+                        botDecisionEngine.chooseMove(
+                            state = snapshot,
+                            ruleSet = currentRuleSet,
+                            legalMoves = snapshot.legalMoves,
+                            difficulty = snapshot.activePlayer.setup.botDifficulty
+                        )
+                    }
+                    animateAndCommitMove(nextBotMove)
+                }
+            } else if (outcome.state.legalMoves.size == 1) {
+                // Only one forced token & step count remains for the human — play it smoothly
+                delayWhileUnpaused(260L)
+                val snapshot = _uiState.value.gameState
+                if (!snapshot.isMatchFinished &&
+                    snapshot.phase == TurnPhase.AWAITING_MOVE &&
+                    snapshot.legalMoves.size == 1
+                ) {
+                    animateAndCommitMove(snapshot.legalMoves.first())
+                }
+            }
         } else {
             applyTurnTransitionSideEffects(
                 nextState = outcome.state,
@@ -956,7 +1009,7 @@ class GameViewModel(
                 isAnimatingMove = false,
                 animatingToken = null,
                 hopScale = 1f,
-                displayedSecondDiceValue = if (nextState.activePlayer.doubleDiceActive) 6 else null,
+                displayedSecondDiceValue = it.displayedSecondDiceValue ?: 6,
                 powerUpTargeting = null
             )
         }
