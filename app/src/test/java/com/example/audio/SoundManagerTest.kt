@@ -161,7 +161,7 @@ class SoundManagerTest {
             }
         )
 
-        manager.updateSettings(soundEffects = false, music = false)
+        manager.updateSettings(soundEffects = false)
         manager.playDiceRoll()
         manager.playTokenMove()
         manager.playCapture()

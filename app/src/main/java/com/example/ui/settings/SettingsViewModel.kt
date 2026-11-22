@@ -29,14 +29,6 @@ class SettingsViewModel(
         viewModelScope.launch { repository.setSoundEffectsVolume(volume) }
     }
 
-    fun setMusic(enabled: Boolean) {
-        viewModelScope.launch { repository.setMusicEnabled(enabled) }
-    }
-
-    fun setMusicVolume(volume: Float) {
-        viewModelScope.launch { repository.setMusicVolume(volume) }
-    }
-
     fun setVibration(enabled: Boolean) {
         viewModelScope.launch { repository.setVibrationEnabled(enabled) }
     }

@@ -129,9 +129,7 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(settings) {
                     soundManager.updateSettings(
                         soundEffects = settings.soundEffectsEnabled,
-                        music = settings.musicEnabled,
-                        soundEffectsVolume = settings.soundEffectsVolume,
-                        musicVolume = settings.musicVolume
+                        soundEffectsVolume = settings.soundEffectsVolume
                     )
                     hapticsManager.updateEnabled(settings.vibrationEnabled)
                 }
@@ -752,40 +750,18 @@ class MainActivity : ComponentActivity() {
                             onSoundEffectsVolumeLiveChange = { vol ->
                                 soundManager.updateSettings(
                                     soundEffects = vol > 0f,
-                                    music = settings.musicEnabled,
-                                    soundEffectsVolume = vol,
-                                    musicVolume = settings.musicVolume
+                                    soundEffectsVolume = vol
                                 )
                             },
                             onSoundEffectsVolumeCommit = { vol ->
                                 soundManager.updateSettings(
                                     soundEffects = vol > 0f,
-                                    music = settings.musicEnabled,
-                                    soundEffectsVolume = vol,
-                                    musicVolume = settings.musicVolume
+                                    soundEffectsVolume = vol
                                 )
                                 settingsViewModel.setSoundEffectsVolume(vol)
                                 if (vol > 0f) {
                                     soundManager.playTokenMove()
                                 }
-                            },
-                            onToggleMusic = settingsViewModel::setMusic,
-                            onMusicVolumeLiveChange = { vol ->
-                                soundManager.updateSettings(
-                                    soundEffects = settings.soundEffectsEnabled,
-                                    music = vol > 0f,
-                                    soundEffectsVolume = settings.soundEffectsVolume,
-                                    musicVolume = vol
-                                )
-                            },
-                            onMusicVolumeCommit = { vol ->
-                                soundManager.updateSettings(
-                                    soundEffects = settings.soundEffectsEnabled,
-                                    music = vol > 0f,
-                                    soundEffectsVolume = settings.soundEffectsVolume,
-                                    musicVolume = vol
-                                )
-                                settingsViewModel.setMusicVolume(vol)
                             },
                             onToggleVibration = settingsViewModel::setVibration,
                             onReplayTutorialClick = { navController.navigate(LudoRoutes.TUTORIAL) },

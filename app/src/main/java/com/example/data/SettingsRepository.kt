@@ -20,8 +20,6 @@ private val Context.ludoSettingsDataStore: DataStore<Preferences> by preferences
 data class AppSettings(
     val soundEffectsEnabled: Boolean = true,
     val soundEffectsVolume: Float = 1f,
-    val musicEnabled: Boolean = true,
-    val musicVolume: Float = 1f,
     val vibrationEnabled: Boolean = true,
     val hasSeenTutorial: Boolean = false,
     val seenModeGuides: Set<String> = emptySet(),
@@ -39,8 +37,6 @@ class SettingsRepository(private val context: Context) {
     private object Keys {
         val SOUND_EFFECTS = booleanPreferencesKey("sound_effects_enabled")
         val SOUND_EFFECTS_VOLUME = floatPreferencesKey("sound_effects_volume")
-        val MUSIC = booleanPreferencesKey("music_enabled")
-        val MUSIC_VOLUME = floatPreferencesKey("music_volume")
         val VIBRATION = booleanPreferencesKey("vibration_enabled")
         val SEEN_POWER_UP_GUIDE = booleanPreferencesKey("seen_power_up_guide")
         val SEEN_TUTORIAL = booleanPreferencesKey("seen_tutorial")
@@ -57,8 +53,6 @@ class SettingsRepository(private val context: Context) {
         AppSettings(
             soundEffectsEnabled = prefs[Keys.SOUND_EFFECTS] ?: true,
             soundEffectsVolume = (prefs[Keys.SOUND_EFFECTS_VOLUME] ?: 1f).coerceIn(0f, 1f),
-            musicEnabled = prefs[Keys.MUSIC] ?: true,
-            musicVolume = (prefs[Keys.MUSIC_VOLUME] ?: 1f).coerceIn(0f, 1f),
             vibrationEnabled = prefs[Keys.VIBRATION] ?: true,
             hasSeenTutorial = prefs[Keys.SEEN_TUTORIAL] ?: false,
             seenModeGuides = seenSet,
@@ -81,23 +75,6 @@ class SettingsRepository(private val context: Context) {
         context.ludoSettingsDataStore.edit { prefs ->
             prefs[Keys.SOUND_EFFECTS_VOLUME] = clamped
             prefs[Keys.SOUND_EFFECTS] = clamped > 0f
-        }
-    }
-
-    suspend fun setMusicEnabled(enabled: Boolean) {
-        context.ludoSettingsDataStore.edit { prefs ->
-            prefs[Keys.MUSIC] = enabled
-            if (enabled && (prefs[Keys.MUSIC_VOLUME] ?: 1f) <= MIN_RESTORE_THRESHOLD) {
-                prefs[Keys.MUSIC_VOLUME] = RESTORED_VOLUME_DEFAULT
-            }
-        }
-    }
-
-    suspend fun setMusicVolume(volume: Float) {
-        val clamped = volume.coerceIn(0f, 1f)
-        context.ludoSettingsDataStore.edit { prefs ->
-            prefs[Keys.MUSIC_VOLUME] = clamped
-            prefs[Keys.MUSIC] = clamped > 0f
         }
     }
 

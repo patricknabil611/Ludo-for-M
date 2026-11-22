@@ -79,6 +79,7 @@ fun PlayerHudCard(
     canUsePowerUps: Boolean = false,
     activeTargetingType: PowerUpType? = null,
     onPowerUpClick: (PowerUpType) -> Unit = {},
+    compact: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     if (player == null) {
@@ -110,17 +111,20 @@ fun PlayerHudCard(
                 scaleX = scale
                 scaleY = scale
             },
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(if (compact) 15.dp else 18.dp),
         color = when {
             player.isEliminated -> Color(0xFFECEAE4)
             isActive -> palette.light
             else -> Color.White.copy(alpha = 0.90f)
         },
-        border = BorderStroke(if (isActive) 2.5.dp else 1.5.dp, borderColor),
-        shadowElevation = if (isActive) 8.dp else 2.dp
+        border = BorderStroke(if (isActive) 2.2.dp else 1.4.dp, borderColor),
+        shadowElevation = if (isActive) 6.dp else 2.dp
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
+            modifier = Modifier.padding(
+                horizontal = if (compact) 7.dp else 9.dp,
+                vertical = if (compact) 4.dp else 6.dp
+            ),
             horizontalAlignment = if (alignEnd) Alignment.End else Alignment.Start
         ) {
             Row(
@@ -133,9 +137,10 @@ fun PlayerHudCard(
                         isActive = isActive,
                         finishRank = finishRank,
                         timerProgress = timerProgress,
-                        remainingSeconds = remainingSeconds
+                        remainingSeconds = remainingSeconds,
+                        compact = compact
                     )
-                    Spacer(Modifier.width(7.dp))
+                    Spacer(Modifier.width(if (compact) 6.dp else 7.dp))
                 }
 
                 Column(
@@ -144,7 +149,8 @@ fun PlayerHudCard(
                 ) {
                     Text(
                         text = player.nickname,
-                        style = MaterialTheme.typography.titleMedium,
+                        style = if (compact) MaterialTheme.typography.labelLarge else MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.ExtraBold,
                         color = InkDark,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -334,13 +340,14 @@ fun PlayerHudCard(
                 }
 
                 if (alignEnd) {
-                    Spacer(Modifier.width(7.dp))
+                    Spacer(Modifier.width(if (compact) 6.dp else 7.dp))
                     AvatarWithTimerRing(
                         player = player,
                         isActive = isActive,
                         finishRank = finishRank,
                         timerProgress = timerProgress,
-                        remainingSeconds = remainingSeconds
+                        remainingSeconds = remainingSeconds,
+                        compact = compact
                     )
                 }
             }
@@ -414,10 +421,13 @@ private fun AvatarWithTimerRing(
     isActive: Boolean,
     finishRank: Int?,
     timerProgress: Float,
-    remainingSeconds: Int
+    remainingSeconds: Int,
+    compact: Boolean = false
 ) {
     val palette = player.color.palette()
     val ringColor = if (remainingSeconds <= 5) CoralPink else palette.primary
+    val outerSize = if (compact) 38.dp else 44.dp
+    val avatarSize = if (compact) 30.dp else 34.dp
 
     val resolvedAvatar = PlayerAvatarCodec.resolve(
         raw = player.avatarId,
@@ -427,12 +437,12 @@ private fun AvatarWithTimerRing(
     )
 
     Box(
-        modifier = Modifier.size(44.dp),
+        modifier = Modifier.size(outerSize),
         contentAlignment = Alignment.Center
     ) {
         if (isActive && !player.isEliminated) {
             Canvas(modifier = Modifier.fillMaxSize()) {
-                val stroke = 4.dp.toPx()
+                val stroke = (if (compact) 3.2.dp else 4.dp).toPx()
                 drawArc(
                     color = palette.primary.copy(alpha = 0.18f),
                     startAngle = -90f,
@@ -452,7 +462,7 @@ private fun AvatarWithTimerRing(
 
         PlayerAvatarBadge(
             avatar = resolvedAvatar,
-            size = 34.dp,
+            size = avatarSize,
             contentDescription = "${player.nickname} avatar",
             dimmed = player.isEliminated
         )

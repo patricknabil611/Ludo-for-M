@@ -12,23 +12,28 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
@@ -40,6 +45,7 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.min
 import androidx.compose.ui.unit.sp
 import com.example.engine.BombTrap
 import com.example.engine.GameModeId
@@ -162,21 +168,31 @@ fun LudoBoardCanvas(
         )
     }
 
-    Box(
-        modifier = modifier
-            .aspectRatio(1f)
-            .shadow(12.dp, RoundedCornerShape(22.dp))
-            .clip(RoundedCornerShape(22.dp))
-            .background(BoardWoodRim)
-            .border(3.dp, InkDark.copy(alpha = 0.22f), RoundedCornerShape(22.dp))
-            .padding(6.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(Color.White)
-            .testTag("ludo_board")
+    BoxWithConstraints(
+        modifier = modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
     ) {
-        Canvas(
+        val boardSide = min(maxWidth, maxHeight)
+        val outerCorner = (boardSide * 0.042f).coerceIn(14.dp, 24.dp)
+        val innerCorner = (outerCorner - 4.dp).coerceAtLeast(10.dp)
+        val rimPadding = (boardSide * 0.011f).coerceIn(3.dp, 6.dp)
+        val borderStroke = (boardSide * 0.006f).coerceIn(2.dp, 3.5.dp)
+
+        Box(
             modifier = Modifier
-                .fillMaxSize()
+                .size(boardSide)
+                .shadow(10.dp, RoundedCornerShape(outerCorner))
+                .clip(RoundedCornerShape(outerCorner))
+                .background(BoardWoodRim)
+                .border(borderStroke, InkDark.copy(alpha = 0.22f), RoundedCornerShape(outerCorner))
+                .padding(rimPadding)
+                .clip(RoundedCornerShape(innerCorner))
+                .background(Color.White)
+                .testTag("ludo_board")
+        ) {
+            Canvas(
+                modifier = Modifier
+                    .fillMaxSize()
                 .pointerInput(
                     renderTokens,
                     gameState.phase,
@@ -304,11 +320,11 @@ fun LudoBoardCanvas(
                 }
             }
 
-            // 5. Draw 4 corner 6x6 bases
-            drawCornerBase(PlayerColor.RED, 0, 0, cell, gameState.activePlayer.color == PlayerColor.RED)
-            drawCornerBase(PlayerColor.GREEN, 0, 9, cell, gameState.activePlayer.color == PlayerColor.GREEN)
-            drawCornerBase(PlayerColor.YELLOW, 9, 9, cell, gameState.activePlayer.color == PlayerColor.YELLOW)
-            drawCornerBase(PlayerColor.BLUE, 9, 0, cell, gameState.activePlayer.color == PlayerColor.BLUE)
+            // 5. Draw 4 corner 6x6 bases with active turn pulse
+            drawCornerBase(PlayerColor.RED, 0, 0, cell, gameState.activePlayer.color == PlayerColor.RED, highlightPulse)
+            drawCornerBase(PlayerColor.GREEN, 0, 9, cell, gameState.activePlayer.color == PlayerColor.GREEN, highlightPulse)
+            drawCornerBase(PlayerColor.YELLOW, 9, 9, cell, gameState.activePlayer.color == PlayerColor.YELLOW, highlightPulse)
+            drawCornerBase(PlayerColor.BLUE, 9, 0, cell, gameState.activePlayer.color == PlayerColor.BLUE, highlightPulse)
 
             // 6. Draw center 3x3 home triangles
             drawCenterHomeTriangles(cell)
@@ -345,6 +361,7 @@ fun LudoBoardCanvas(
                     progress = explosionProgress.value
                 )
             }
+        }
         }
     }
 }
@@ -469,17 +486,28 @@ private val START_COLOR_MAP = mapOf(
     39 to PlayerColor.BLUE
 )
 
+// Bridge squares where each player turns into their colored home column (index -> color & angle degrees)
+private val HOME_ENTRY_ARROW_MAP = mapOf(
+    50 to (PlayerColor.RED to 0f),      // (7, 0) pointing Right
+    11 to (PlayerColor.GREEN to 90f),   // (0, 7) pointing Down
+    24 to (PlayerColor.YELLOW to 180f), // (7, 14) pointing Left
+    37 to (PlayerColor.BLUE to 270f)    // (14, 7) pointing Up
+)
+
 private fun DrawScope.drawOuterTrackCells(cell: Float, activeSafeIndices: Set<Int>) {
+    val gridStroke = (cell * 0.052f).coerceAtLeast(1.1f)
     LudoBoardGeometry.OUTER_TRACK.forEachIndexed { idx, coord ->
         val topLeft = Offset(coord.col * cell, coord.row * cell)
         val cellSize = Size(cell, cell)
 
         val startColor = START_COLOR_MAP[idx]
+        val entryInfo = HOME_ENTRY_ARROW_MAP[idx]
         val isSafeStar = idx in activeSafeIndices && startColor == null
 
         val fill = when {
             startColor != null -> startColor.palette().primary
             isSafeStar -> Color(0xFFFFF4CC)
+            entryInfo != null -> entryInfo.first.palette().light.copy(alpha = 0.72f)
             else -> Color(0xFFFCFAF5)
         }
 
@@ -488,7 +516,7 @@ private fun DrawScope.drawOuterTrackCells(cell: Float, activeSafeIndices: Set<In
             color = BoardCellBorder,
             topLeft = topLeft,
             size = cellSize,
-            style = Stroke(width = 1.4f)
+            style = Stroke(width = gridStroke)
         )
 
         val center = Offset((coord.col + 0.5f) * cell, (coord.row + 0.5f) * cell)
@@ -497,16 +525,53 @@ private fun DrawScope.drawOuterTrackCells(cell: Float, activeSafeIndices: Set<In
                 center = center,
                 outerRadius = cell * 0.34f,
                 innerRadius = cell * 0.16f,
-                color = if (idx in activeSafeIndices) Color.White.copy(alpha = 0.95f) else Color.White.copy(alpha = 0.45f)
+                color = if (idx in activeSafeIndices) Color.White.copy(alpha = 0.96f) else Color.White.copy(alpha = 0.50f)
             )
         } else if (isSafeStar) {
             drawStar(
                 center = center,
-                outerRadius = cell * 0.34f,
-                innerRadius = cell * 0.16f,
+                outerRadius = cell * 0.35f,
+                innerRadius = cell * 0.165f,
                 color = SafeStarGold
             )
+        } else if (entryInfo != null) {
+            drawDirectionArrow(
+                center = center,
+                cell = cell,
+                angleDeg = entryInfo.second,
+                color = entryInfo.first.palette().dark.copy(alpha = 0.78f)
+            )
         }
+    }
+}
+
+private fun DrawScope.drawDirectionArrow(
+    center: Offset,
+    cell: Float,
+    angleDeg: Float,
+    color: Color
+) {
+    val shaft = cell * 0.24f
+    val wing = cell * 0.16f
+    val strokeW = (cell * 0.095f).coerceAtLeast(1.8f)
+    rotate(degrees = angleDeg, pivot = center) {
+        drawLine(
+            color = color,
+            start = Offset(center.x - shaft, center.y),
+            end = Offset(center.x + shaft, center.y),
+            strokeWidth = strokeW,
+            cap = StrokeCap.Round
+        )
+        val chevron = Path().apply {
+            moveTo(center.x + shaft - wing, center.y - wing)
+            lineTo(center.x + shaft, center.y)
+            lineTo(center.x + shaft - wing, center.y + wing)
+        }
+        drawPath(
+            path = chevron,
+            color = color,
+            style = Stroke(width = strokeW, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        )
     }
 }
 
@@ -703,31 +768,44 @@ private fun DrawScope.drawBombTargetSquare(trackIndex: Int, cell: Float, pulse: 
 }
 
 private fun DrawScope.drawHomeColumns(cell: Float, gameState: GameState) {
+    val gridStroke = (cell * 0.055f).coerceAtLeast(1.2f)
     for (color in PlayerColor.entries) {
         val palette = color.palette()
         val coords = LudoBoardGeometry.homeColumnCoords(color)
         val player = gameState.playerByColor(color)
         val isMasterLocked = gameState.mode == GameModeId.MASTER &&
             player != null && !player.hasCapturedOpponent
+        val arrowAngle = when (color) {
+            PlayerColor.RED -> 0f
+            PlayerColor.GREEN -> 90f
+            PlayerColor.YELLOW -> 180f
+            PlayerColor.BLUE -> 270f
+        }
 
         coords.forEachIndexed { idx, coord ->
             val topLeft = Offset(coord.col * cell, coord.row * cell)
+            val fillAlpha = if (isMasterLocked) 0.55f else 0.88f + (idx * 0.03f)
             drawRect(
-                color = if (isMasterLocked) palette.primary.copy(alpha = 0.55f) else palette.primary,
+                color = palette.primary.copy(alpha = fillAlpha.coerceAtMost(1f)),
                 topLeft = topLeft,
                 size = Size(cell, cell)
             )
             drawRect(
-                color = Color.White.copy(alpha = 0.55f),
+                color = Color.White.copy(alpha = 0.62f),
                 topLeft = topLeft,
                 size = Size(cell, cell),
-                style = Stroke(width = 1.6f)
+                style = Stroke(width = gridStroke)
             )
-            // Draw lock icon in center of home column when locked in Master mode
+            val center = Offset((coord.col + 0.5f) * cell, (coord.row + 0.5f) * cell)
             if (isMasterLocked && idx == 2) {
-                drawLockBadge(
-                    center = Offset((coord.col + 0.5f) * cell, (coord.row + 0.5f) * cell),
-                    cell = cell
+                drawLockBadge(center = center, cell = cell)
+            } else if (idx == 4) {
+                // Subtle entry chevron on final home-column tile leading into the finish crown
+                drawDirectionArrow(
+                    center = center,
+                    cell = cell * 0.84f,
+                    angleDeg = arrowAngle,
+                    color = Color.White.copy(alpha = 0.42f)
                 )
             }
         }
@@ -792,50 +870,83 @@ private fun DrawScope.drawCornerBase(
     startRow: Int,
     startCol: Int,
     cell: Float,
-    isActive: Boolean
+    isActive: Boolean,
+    pulse: Float
 ) {
     val palette = color.palette()
     val x = startCol * cell
     val y = startRow * cell
     val boxSize = 6f * cell
 
-    drawRect(color = palette.primary, topLeft = Offset(x, y), size = Size(boxSize, boxSize))
+    // Rich directional gradient yard background
     drawRect(
-        color = if (isActive) Color.White else palette.dark.copy(alpha = 0.35f),
-        topLeft = Offset(x + 2f, y + 2f),
-        size = Size(boxSize - 4f, boxSize - 4f),
-        style = Stroke(width = if (isActive) 5f else 2f)
+        brush = Brush.linearGradient(
+            colors = listOf(palette.highlight, palette.primary, palette.dark.copy(alpha = 0.92f)),
+            start = Offset(x, y),
+            end = Offset(x + boxSize, y + boxSize)
+        ),
+        topLeft = Offset(x, y),
+        size = Size(boxSize, boxSize)
     )
 
-    val pad = cell * 0.95f
+    // Subtle crisp border + pulsing active-player highlight frame
+    val borderW = if (isActive) (cell * (0.16f + pulse * 0.07f)).coerceAtLeast(3.5f) else (cell * 0.065f).coerceAtLeast(1.5f)
+    drawRect(
+        color = if (isActive) Color.White.copy(alpha = 0.85f + pulse * 0.15f) else palette.dark.copy(alpha = 0.32f),
+        topLeft = Offset(x + borderW * 0.5f, y + borderW * 0.5f),
+        size = Size(boxSize - borderW, boxSize - borderW),
+        style = Stroke(width = borderW)
+    )
+
+    // Elevated white inner yard card with soft drop shadow
+    val pad = cell * 0.86f
     val innerSize = boxSize - pad * 2f
+    val cornerR = CornerRadius(cell * 0.78f, cell * 0.78f)
     drawRoundRect(
-        color = Color.White,
-        topLeft = Offset(x + pad, y + pad),
+        color = palette.dark.copy(alpha = 0.24f),
+        topLeft = Offset(x + pad, y + pad + cell * 0.11f),
         size = Size(innerSize, innerSize),
-        cornerRadius = CornerRadius(cell * 0.75f, cell * 0.75f)
+        cornerRadius = cornerR
     )
     drawRoundRect(
-        color = palette.dark.copy(alpha = 0.25f),
+        brush = Brush.verticalGradient(
+            colors = listOf(Color(0xFFFFFFFF), Color(0xFFFDFBF7)),
+            startY = y + pad,
+            endY = y + pad + innerSize
+        ),
         topLeft = Offset(x + pad, y + pad),
         size = Size(innerSize, innerSize),
-        cornerRadius = CornerRadius(cell * 0.75f, cell * 0.75f),
-        style = Stroke(width = 2.5f)
+        cornerRadius = cornerR
+    )
+    drawRoundRect(
+        color = palette.primary.copy(alpha = 0.28f),
+        topLeft = Offset(x + pad, y + pad),
+        size = Size(innerSize, innerSize),
+        cornerRadius = cornerR,
+        style = Stroke(width = (cell * 0.085f).coerceAtLeast(1.8f))
     )
 
+    // 4 recessed token launch pads with glossy double-ring detail
     for (tokenId in 0..3) {
         val (tr, tc) = LudoBoardGeometry.baseTokenCenter(color, tokenId)
         val center = Offset(tc * cell, tr * cell)
+        val padR = cell * 0.54f
         drawCircle(
             color = palette.light,
-            radius = cell * 0.52f,
+            radius = padR,
             center = center
         )
         drawCircle(
-            color = palette.primary.copy(alpha = 0.45f),
-            radius = cell * 0.52f,
+            color = palette.primary.copy(alpha = 0.55f),
+            radius = padR,
             center = center,
-            style = Stroke(width = 2.5f)
+            style = Stroke(width = (cell * 0.09f).coerceAtLeast(1.8f))
+        )
+        drawCircle(
+            color = Color.White.copy(alpha = 0.85f),
+            radius = padR * 0.72f,
+            center = center,
+            style = Stroke(width = (cell * 0.045f).coerceAtLeast(1.1f))
         )
     }
 }

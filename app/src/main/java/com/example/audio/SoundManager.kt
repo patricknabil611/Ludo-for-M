@@ -15,12 +15,12 @@ import java.io.FileInputStream
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Manages distinct game sound effects (dice roll, token movement, opponent capture,
- * power-ups, fanfares) and background music playback using Android's [MediaPlayer].
+ * Manages distinct in-game sound effects (dice roll, token movement, opponent capture,
+ * power-ups, fanfares) using Android's [MediaPlayer].
  *
- * Each [SoundEffect] is materialized once as a standard RIFF/WAVE file inside the app's
- * cache directory and played via properly configured [MediaPlayer] instances with automatic
- * completion/error cleanup and a bounded concurrency pool so overlapping effects never leak.
+ * Each [SoundEffect] is materialized once as a studio-mastered 44.1 kHz RIFF/WAVE file
+ * inside the app's cache directory and played via properly configured [MediaPlayer] instances
+ * with automatic completion/error cleanup and a bounded concurrency pool.
  */
 open class SoundManager(
     context: Context,
@@ -35,23 +35,11 @@ open class SoundManager(
     private val activePlayersLock = Any()
     private val activeOneShotPlayers = ArrayDeque<MediaPlayer>()
 
-    private val musicLock = Any()
-    private var musicPlayer: MediaPlayer? = null
-
     @Volatile
     private var sfxEnabled: Boolean = true
 
     @Volatile
     private var sfxVolume: Float = 1f
-
-    @Volatile
-    private var musicEnabled: Boolean = true
-
-    @Volatile
-    private var musicVolume: Float = 1f
-
-    @Volatile
-    private var appInForeground: Boolean = true
 
     @Volatile
     private var released: Boolean = false
@@ -63,15 +51,26 @@ open class SoundManager(
             .build()
     }
 
-    private val musicAudioAttributes: AudioAttributes by lazy {
-        AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_GAME)
-            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-            .build()
+    init {
+        cleanupLegacyAudioCache()
+        preloadCoreEffects()
     }
 
-    init {
-        preloadCoreEffects()
+    /**
+     * Removes any old v2 or deprecated background music WAV files from cache.
+     */
+    private fun cleanupLegacyAudioCache() {
+        if (released) return
+        scope.launch {
+            runCatching {
+                val activeNames = SoundEffect.entries.map { it.fileName }.toSet()
+                cacheDirectory.listFiles()?.forEach { file ->
+                    if (file.isFile && file.name !in activeNames) {
+                        file.delete()
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -89,33 +88,20 @@ open class SoundManager(
 
     fun updateSettings(
         soundEffects: Boolean,
-        music: Boolean,
-        soundEffectsVolume: Float = sfxVolume,
-        musicVolume: Float = this.musicVolume
+        soundEffectsVolume: Float = sfxVolume
     ) {
         sfxEnabled = soundEffects
         sfxVolume = soundEffectsVolume.coerceIn(0f, 1f)
 
-        val clampedMusicVolume = musicVolume.coerceIn(0f, 1f)
-        val musicChanged = musicEnabled != music
-        val musicVolumeChanged = this.musicVolume != clampedMusicVolume
-        musicEnabled = music
-        this.musicVolume = clampedMusicVolume
-
         if (!soundEffects || sfxVolume <= 0f) {
             stopAllOneShotPlayers()
-        }
-        if (musicVolumeChanged) {
-            applyCurrentMusicVolume()
-        }
-        if (musicChanged || (musicEnabled && clampedMusicVolume > 0f && appInForeground) || clampedMusicVolume <= 0f) {
-            syncMusicPlayback()
         }
     }
 
     fun setForeground(inForeground: Boolean) {
-        appInForeground = inForeground
-        syncMusicPlayback()
+        if (!inForeground) {
+            stopAllOneShotPlayers()
+        }
     }
 
     /** Plays the distinct wooden dice rattle sound effect via [MediaPlayer]. */
@@ -177,7 +163,7 @@ open class SoundManager(
      * Automatically cleans up and releases the player on completion or error.
      */
     fun playEffect(effect: SoundEffect, volume: Float = effect.defaultVolume) {
-        if (released || !sfxEnabled || effect.isMusic) return
+        if (released || !sfxEnabled) return
         val effectiveVolume = computeEffectiveVolume(
             baseVolume = volume,
             masterVolume = sfxVolume,
@@ -196,7 +182,6 @@ open class SoundManager(
     fun release() {
         if (released) return
         released = true
-        stopAndReleaseMusicPlayer()
         stopAllOneShotPlayers()
         scope.cancel()
     }
@@ -284,96 +269,6 @@ open class SoundManager(
             copy
         }
         snapshot.forEach { safeReleasePlayer(it) }
-    }
-
-    private fun currentEffectiveMusicVolume(): Float = computeEffectiveVolume(
-        baseVolume = SoundEffect.BACKGROUND_MUSIC.defaultVolume,
-        masterVolume = musicVolume,
-        enabled = musicEnabled
-    )
-
-    private fun applyCurrentMusicVolume() {
-        val vol = currentEffectiveMusicVolume()
-        synchronized(musicLock) {
-            musicPlayer?.let { mp ->
-                runCatching { mp.setVolume(vol, vol) }
-            }
-        }
-    }
-
-    private fun syncMusicPlayback() {
-        if (released) return
-        val shouldPlay = musicEnabled && musicVolume > 0f && appInForeground
-        if (shouldPlay) {
-            scope.launch {
-                if (released || !musicEnabled || musicVolume <= 0f || !appInForeground) return@launch
-                startOrResumeMusicPlayer()
-            }
-        } else {
-            synchronized(musicLock) {
-                val mp = musicPlayer ?: return
-                if (!musicEnabled || musicVolume <= 0f) {
-                    musicPlayer = null
-                    safeReleasePlayer(mp)
-                } else {
-                    runCatching {
-                        if (mp.isPlaying) mp.pause()
-                    }
-                }
-            }
-        }
-    }
-
-    private fun startOrResumeMusicPlayer() {
-        val wavFile = runCatching { ensureWavFile(SoundEffect.BACKGROUND_MUSIC) }.getOrNull() ?: return
-        synchronized(musicLock) {
-            if (released || !musicEnabled || musicVolume <= 0f || !appInForeground) return
-            val vol = currentEffectiveMusicVolume()
-            val existing = musicPlayer
-            if (existing != null) {
-                runCatching {
-                    existing.setVolume(vol, vol)
-                    if (!existing.isPlaying) existing.start()
-                }
-                return
-            }
-
-            var created: MediaPlayer? = null
-            try {
-                created = mediaPlayerFactory()
-                created.setAudioAttributes(musicAudioAttributes)
-                FileInputStream(wavFile).use { fis ->
-                    created.setDataSource(fis.fd)
-                }
-                created.isLooping = true
-                created.setVolume(vol, vol)
-                created.setOnErrorListener { errored, _, _ ->
-                    synchronized(musicLock) {
-                        if (musicPlayer === errored) musicPlayer = null
-                    }
-                    safeReleasePlayer(errored)
-                    true
-                }
-                created.prepare()
-                if (released || !musicEnabled || musicVolume <= 0f || !appInForeground) {
-                    safeReleasePlayer(created)
-                    return
-                }
-                created.start()
-                musicPlayer = created
-            } catch (_: Exception) {
-                created?.let { safeReleasePlayer(it) }
-            }
-        }
-    }
-
-    private fun stopAndReleaseMusicPlayer() {
-        val mp = synchronized(musicLock) {
-            val current = musicPlayer
-            musicPlayer = null
-            current
-        }
-        mp?.let { safeReleasePlayer(it) }
     }
 
     private fun safeReleasePlayer(player: MediaPlayer) {

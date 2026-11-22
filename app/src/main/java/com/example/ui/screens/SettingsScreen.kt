@@ -25,8 +25,6 @@ import androidx.compose.material.icons.automirrored.filled.VolumeDown
 import androidx.compose.material.icons.automirrored.filled.VolumeMute
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.MusicOff
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Vibration
 import androidx.compose.material3.Icon
@@ -70,8 +68,6 @@ import com.example.ui.theme.InkDark
 import com.example.ui.theme.InkMuted
 import com.example.ui.theme.MintGreen
 import com.example.ui.theme.SkyTopTint
-import com.example.ui.theme.SunnyGold
-import com.example.ui.theme.SunnyGoldDark
 import kotlin.math.roundToInt
 
 @Composable
@@ -80,9 +76,6 @@ fun SettingsScreen(
     onToggleSoundEffects: (Boolean) -> Unit,
     onSoundEffectsVolumeLiveChange: (Float) -> Unit = {},
     onSoundEffectsVolumeCommit: (Float) -> Unit = {},
-    onToggleMusic: (Boolean) -> Unit,
-    onMusicVolumeLiveChange: (Float) -> Unit = {},
-    onMusicVolumeCommit: (Float) -> Unit = {},
     onToggleVibration: (Boolean) -> Unit,
     onReplayTutorialClick: () -> Unit = {},
     onBackClick: () -> Unit
@@ -144,26 +137,6 @@ fun SettingsScreen(
                 onVolumeCommit = onSoundEffectsVolumeCommit,
                 toggleTag = "toggle_sound_effects",
                 sliderTag = "slider_sound_effects_volume"
-            )
-
-            // Background Music Toggle + Volume Slider Card
-            SettingAudioCard(
-                iconForLevel = { enabled, level ->
-                    if (!enabled || level <= 0f) Icons.Filled.MusicOff else Icons.Filled.MusicNote
-                },
-                iconTint = SunnyGoldDark,
-                sliderAccent = SunnyGoldDark,
-                sliderTrackHighlight = SunnyGold,
-                title = stringResource(R.string.settings_music),
-                subtitle = stringResource(R.string.settings_music_desc),
-                volumeLabel = stringResource(R.string.settings_music_volume),
-                checked = settings.musicEnabled,
-                volume = settings.musicVolume,
-                onCheckedChange = onToggleMusic,
-                onVolumeLiveChange = onMusicVolumeLiveChange,
-                onVolumeCommit = onMusicVolumeCommit,
-                toggleTag = "toggle_music",
-                sliderTag = "slider_music_volume"
             )
 
             SettingToggleRow(

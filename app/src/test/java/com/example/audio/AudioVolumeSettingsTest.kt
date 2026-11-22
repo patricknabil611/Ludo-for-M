@@ -8,12 +8,10 @@ import org.junit.Test
 class AudioVolumeSettingsTest {
 
     @Test
-    fun appSettings_defaultsToFullAudibleSfxAndMusicVolume() {
+    fun appSettings_defaultsToFullAudibleSfxVolume() {
         val defaults = AppSettings()
         assertTrue(defaults.soundEffectsEnabled)
-        assertTrue(defaults.musicEnabled)
         assertEquals(1f, defaults.soundEffectsVolume, 0.0001f)
-        assertEquals(1f, defaults.musicVolume, 0.0001f)
     }
 
     @Test
@@ -27,9 +25,9 @@ class AudioVolumeSettingsTest {
 
     @Test
     fun computeEffectiveVolume_clampsOutOfBoundsInputs() {
-        val musicBase = SoundEffect.BACKGROUND_MUSIC.defaultVolume
-        assertEquals(musicBase, SoundManager.computeEffectiveVolume(musicBase, 2.5f, enabled = true), 0.0001f)
-        assertEquals(0f, SoundManager.computeEffectiveVolume(musicBase, -0.4f, enabled = true), 0.0001f)
+        val captureBase = SoundEffect.CAPTURE.defaultVolume
+        assertEquals(captureBase, SoundManager.computeEffectiveVolume(captureBase, 2.5f, enabled = true), 0.0001f)
+        assertEquals(0f, SoundManager.computeEffectiveVolume(captureBase, -0.4f, enabled = true), 0.0001f)
         assertEquals(1f, SoundManager.computeEffectiveVolume(1.8f, 1.4f, enabled = true), 0.0001f)
     }
 }

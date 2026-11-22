@@ -26,11 +26,8 @@
     <string name="winner_home">Home</string>
     <string name="settings_title">Settings</string>
     <string name="settings_sound_effects">Sound Effects</string>
-    <string name="settings_sound_effects_desc">Dice rolls, token hops, captures &amp; fanfares</string>
+    <string name="settings_sound_effects_desc">Hi-fi dice rolls, token hops, captures &amp; fanfares</string>
     <string name="settings_sound_effects_volume">Sound Volume</string>
-    <string name="settings_music">Background Music</string>
-    <string name="settings_music_desc">Cheerful loop on menus and board</string>
-    <string name="settings_music_volume">Music Volume</string>
     <string name="settings_volume_muted">Muted</string>
     <string name="settings_vibration">Vibration</string>
     <string name="settings_vibration_desc">Haptic feedback on rolls, captures &amp; victory</string>
@@ -134,4 +131,10 @@
     <string name="avatar_save_cta">Save Avatar</string>
     <string name="cd_customize_avatar">Customize player avatar</string>
     <string name="cd_close_avatar_studio">Close Avatar Studio</string>
+    <string name="die_choice_popup_title">Choose Your Move</string>
+    <string name="die_choice_popup_subtitle">Pick which die number to move first, then tap a glowing token</string>
+    <string name="die_choice_switch_cta">Switch Die</string>
+    <string name="die_choice_used_label">Used</string>
+    <string name="die_choice_no_moves_label">No move</string>
+    <string name="cd_close_die_choice">Close die selector</string>
 </resources>
