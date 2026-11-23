@@ -26,10 +26,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -37,18 +35,15 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.R
-import com.example.ui.theme.CobaltPrimary
-import com.example.ui.theme.CreamBackground
-import com.example.ui.theme.InkDark
-import com.example.ui.theme.InkMuted
-import com.example.ui.theme.SkyTopTint
-import com.example.ui.theme.SunnyGold
+import com.example.ui.theme.LocalLudoTheme
+import com.example.ui.theme.ludoShadow
 import kotlinx.coroutines.delay
 
 @Composable
 fun SplashScreen(
     onSplashFinished: () -> Unit
 ) {
+    val theme = LocalLudoTheme.current
     val scale = remember { Animatable(0.7f) }
     val alpha = remember { Animatable(0f) }
 
@@ -59,14 +54,13 @@ fun SplashScreen(
         onSplashFinished()
     }
 
+    val titleColor = theme.accessibleAccentOn(theme.blue, theme.bg)
+    val badgeBg = lerp(theme.surface, theme.yellow, if (theme.isDarkSurface) 0.22f else 0.16f)
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(SkyTopTint, CreamBackground)
-                )
-            )
+            .background(theme.bg)
             .safeDrawingPadding()
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
@@ -87,38 +81,44 @@ fun SplashScreen(
                     this.alpha = alpha.value
                 }
         ) {
-            Image(
-                painter = painterResource(id = R.drawable.img_ludo_hero),
-                contentDescription = stringResource(R.string.cd_hero_art),
-                contentScale = ContentScale.Crop,
+            Box(
                 modifier = Modifier
                     .size(210.dp)
-                    .shadow(16.dp, RoundedCornerShape(40.dp))
-                    .clip(RoundedCornerShape(40.dp))
-                    .border(4.dp, Color.White, RoundedCornerShape(40.dp))
-            )
+                    .ludoShadow(theme.cardShadow, 36.dp)
+                    .clip(RoundedCornerShape(36.dp))
+                    .border(3.dp, theme.surface, RoundedCornerShape(36.dp))
+            ) {
+                Image(
+                    painter = painterResource(id = R.drawable.img_ludo_hero),
+                    contentDescription = stringResource(R.string.cd_hero_art),
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
 
             Spacer(Modifier.height(28.dp))
 
             Text(
                 text = stringResource(R.string.app_name),
                 style = MaterialTheme.typography.displayLarge,
-                color = CobaltPrimary,
+                color = titleColor,
                 textAlign = TextAlign.Center
             )
 
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(10.dp))
 
             Box(
                 modifier = Modifier
+                    .ludoShadow(theme.cardShadow, 999.dp)
                     .clip(RoundedCornerShape(999.dp))
-                    .background(SunnyGold.copy(alpha = 0.22f))
+                    .background(badgeBg)
+                    .border(1.dp, theme.chipLine, RoundedCornerShape(999.dp))
                     .padding(horizontal = 18.dp, vertical = 8.dp)
             ) {
                 Text(
                     text = stringResource(R.string.splash_tagline),
                     style = MaterialTheme.typography.titleMedium,
-                    color = InkDark,
+                    color = theme.surfaceText,
                     textAlign = TextAlign.Center
                 )
             }
@@ -128,7 +128,7 @@ fun SplashScreen(
             Text(
                 text = "Tap anywhere to start",
                 style = MaterialTheme.typography.labelMedium,
-                color = InkMuted
+                color = theme.mutedText
             )
         }
     }

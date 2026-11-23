@@ -2,6 +2,7 @@ package com.example
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedContentTransitionScope
@@ -17,6 +18,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -34,6 +36,8 @@ import com.example.data.MatchHistoryRepository
 import com.example.data.SavedGameRepository
 import com.example.data.SettingsRepository
 import com.example.engine.GameModeId
+import com.example.engine.MatchFormat
+import com.example.engine.TurnTimerOption
 import com.example.online.AuthManager
 import com.example.online.GuestProfileRepository
 import com.example.online.OnlineProfileAndLeaderboardRepository
@@ -61,7 +65,10 @@ import com.example.ui.screens.TutorialScreen
 import com.example.ui.screens.WinnerScreen
 import com.example.ui.settings.SettingsViewModel
 import com.example.ui.theme.LudoForMTheme
+import com.example.ui.theme.toLudoTheme
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 object LudoRoutes {
     const val SPLASH = "splash"
@@ -87,41 +94,62 @@ object LudoRoutes {
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+
+        // Read persisted theme synchronously before the first frame so the app never flashes the wrong theme.
+        val appContext = applicationContext
+        val preloadedSettingsRepo = SettingsRepository(appContext)
+        val initialThemeId = runBlocking(Dispatchers.IO) {
+            preloadedSettingsRepo.readInitialThemeId()
+        }
+        val initialTheme = initialThemeId.toLudoTheme()
+        val initialBarArgb = initialTheme.bg.toArgb()
+        val initialBarStyle = if (initialTheme.isLightSystemBars) {
+            SystemBarStyle.light(scrim = initialBarArgb, darkScrim = initialBarArgb)
+        } else {
+            SystemBarStyle.dark(scrim = initialBarArgb)
+        }
+        enableEdgeToEdge(
+            statusBarStyle = initialBarStyle,
+            navigationBarStyle = initialBarStyle
+        )
+
         setContent {
-            LudoForMTheme {
-                val activity = this
-                val context = LocalContext.current.applicationContext
-                val coroutineScope = rememberCoroutineScope()
+            val activity = this
+            val context = LocalContext.current.applicationContext
+            val coroutineScope = rememberCoroutineScope()
 
-                val settingsRepository = remember { SettingsRepository(context) }
-                val savedGameRepository = remember { SavedGameRepository(context) }
-                val matchHistoryRepository = remember { MatchHistoryRepository(context) }
-                val soundManager = remember { SoundManager(context) }
-                val hapticsManager = remember { LudoHapticsManager(context) }
+            val settingsRepository = remember { preloadedSettingsRepo }
+            val savedGameRepository = remember { SavedGameRepository(context) }
+            val matchHistoryRepository = remember { MatchHistoryRepository(context) }
+            val soundManager = remember { SoundManager(context) }
+            val hapticsManager = remember { LudoHapticsManager(context) }
 
-                val authManager = remember { AuthManager(context) }
-                val guestRepo = remember { GuestProfileRepository(context) }
-                val profileRepo = remember { OnlineProfileAndLeaderboardRepository(context) }
-                val roomRepo = remember { OnlineRoomRepository(context) }
+            val authManager = remember { AuthManager(context) }
+            val guestRepo = remember { GuestProfileRepository(context) }
+            val profileRepo = remember { OnlineProfileAndLeaderboardRepository(context) }
+            val roomRepo = remember { OnlineRoomRepository(context) }
 
-                val settingsViewModel: SettingsViewModel = viewModel(
-                    factory = SettingsViewModel.Factory(settingsRepository)
-                )
-                val gameViewModel: GameViewModel = viewModel(
-                    factory = GameViewModel.Factory(soundManager, hapticsManager, savedGameRepository)
-                )
-                val authViewModel: OnlineAuthViewModel = viewModel(
-                    factory = OnlineAuthViewModel.Factory(authManager, guestRepo, profileRepo)
-                )
+            val settingsViewModel: SettingsViewModel = viewModel(
+                factory = SettingsViewModel.Factory(settingsRepository, initialThemeId)
+            )
+            val gameViewModel: GameViewModel = viewModel(
+                factory = GameViewModel.Factory(soundManager, hapticsManager, savedGameRepository)
+            )
+            val authViewModel: OnlineAuthViewModel = viewModel(
+                factory = OnlineAuthViewModel.Factory(authManager, guestRepo, profileRepo)
+            )
 
-                val settings by settingsViewModel.settings.collectAsStateWithLifecycle()
-                val gameUiState by gameViewModel.uiState.collectAsStateWithLifecycle()
-                val authState by authViewModel.uiState.collectAsStateWithLifecycle()
-                val savedGameSummary by savedGameRepository.savedGameSummaryFlow
-                    .collectAsStateWithLifecycle(initialValue = null)
-                var selectedMode by remember { mutableStateOf(GameModeId.CLASSIC) }
+            val settings by settingsViewModel.settings.collectAsStateWithLifecycle()
+            val gameUiState by gameViewModel.uiState.collectAsStateWithLifecycle()
+            val authState by authViewModel.uiState.collectAsStateWithLifecycle()
+            val savedGameSummary by savedGameRepository.savedGameSummaryFlow
+                .collectAsStateWithLifecycle(initialValue = null)
 
+            var selectedMode by remember { mutableStateOf(GameModeId.CLASSIC) }
+            var selectedFormat by remember { mutableStateOf(MatchFormat.FOUR_PLAYERS) }
+            var selectedTimer by remember { mutableStateOf(TurnTimerOption.FIFTEEN) }
+
+            LudoForMTheme(themeId = settings.themeId) {
                 LaunchedEffect(Unit) {
                     authViewModel.attemptAutoSignInOnce(activity)
                 }
@@ -365,12 +393,13 @@ class MainActivity : ComponentActivity() {
                                 OnlineHubScreen(
                                     authState = authState,
                                     hubState = hubState,
-                                    onCreatePrivateRoom = { mode, count, timedSec ->
+                                    onCreatePrivateRoom = { mode, matchFormat, timedSec, turnTimerSec ->
                                         hubViewModel.createPrivateRoom(
                                             nickname = authState.effectiveNickname,
                                             mode = mode,
-                                            targetPlayerCount = count,
+                                            matchFormat = matchFormat,
                                             timedDurationSeconds = timedSec,
+                                            turnTimerSeconds = turnTimerSec,
                                             avatarId = authState.effectiveAvatarId
                                         ) { code ->
                                             navController.navigate(LudoRoutes.onlineLobby(code))
@@ -389,12 +418,13 @@ class MainActivity : ComponentActivity() {
                                             }
                                         }
                                     },
-                                    onStartMatchmaking = { mode, count, timedSec ->
+                                    onStartMatchmaking = { mode, matchFormat, timedSec, turnTimerSec ->
                                         hubViewModel.startMatchmaking(
                                             nickname = authState.effectiveNickname,
                                             mode = mode,
-                                            targetPlayerCount = count,
+                                            matchFormat = matchFormat,
                                             timedDurationSeconds = timedSec,
+                                            turnTimerSeconds = turnTimerSec,
                                             avatarId = authState.effectiveAvatarId
                                         )
                                     },
@@ -562,9 +592,7 @@ class MainActivity : ComponentActivity() {
                                                 settingsViewModel.markModeGuideSeen(activeMode)
                                             }
                                         },
-                                        onPowerUpTapped = { onlineGameVm.onPowerUpButtonTapped(it) },
-                                        onCancelPowerUpTargeting = { onlineGameVm.onCancelPowerUpTargeting() },
-                                        onShieldTokenSelected = { onlineGameVm.onShieldTokenSelected(it) },
+                                        onOpenSettings = { navController.navigate(LudoRoutes.SETTINGS) },
                                         onBombSquareSelected = { onlineGameVm.onBombSquareSelected(it) },
                                         isOnlineMode = true,
                                         onlineRoomCode = roomCode,
@@ -575,6 +603,8 @@ class MainActivity : ComponentActivity() {
                                         onRollDice = { onlineGameVm.onRollDiceTapped() },
                                         onSelectDieValue = { onlineGameVm.onSelectDieValue(it) },
                                         onTokenTapped = { onlineGameVm.onTokenTapped(it) },
+                                        onMoveSelected = { onlineGameVm.onMoveSelected(it) },
+                                        onMoveSequenceSelected = { onlineGameVm.onMoveSequenceSelected(it) },
                                         onPause = { onlineGameVm.pauseMenuOpen(true) },
                                         onResume = { onlineGameVm.pauseMenuOpen(false) },
                                         onRestart = {},
@@ -618,6 +648,7 @@ class MainActivity : ComponentActivity() {
                                     factory = LeaderboardViewModel.Factory(currentUser.uid, profileRepo)
                                 )
                                 val selectedTab by leaderboardVm.selectedTab.collectAsStateWithLifecycle()
+                                val selectedModeFilter by leaderboardVm.selectedMode.collectAsStateWithLifecycle()
                                 val lbState by leaderboardVm.uiState.collectAsStateWithLifecycle()
 
                                 LeaderboardScreen(
@@ -625,7 +656,9 @@ class MainActivity : ComponentActivity() {
                                     uiState = lbState,
                                     myUid = currentUser.uid,
                                     onSelectTab = leaderboardVm::selectTab,
-                                    onBackClick = { navController.popBackStack() }
+                                    onBackClick = { navController.popBackStack() },
+                                    selectedMode = selectedModeFilter,
+                                    onSelectModeFilter = leaderboardVm::selectModeFilter
                                 )
                             }
                         }
@@ -633,9 +666,14 @@ class MainActivity : ComponentActivity() {
 
                     composable(LudoRoutes.MODES) {
                         ModeSelectionScreen(
+                            initialMode = selectedMode,
+                            initialFormat = selectedFormat,
+                            initialTimer = selectedTimer,
                             onBackClick = { navController.popBackStack() },
-                            onModeSelected = { mode ->
+                            onStartSelected = { mode, format, timer ->
                                 selectedMode = mode
+                                selectedFormat = format
+                                selectedTimer = timer
                                 navController.navigate(LudoRoutes.SETUP)
                             }
                         )
@@ -644,13 +682,21 @@ class MainActivity : ComponentActivity() {
                     composable(LudoRoutes.SETUP) {
                         GameSetupScreen(
                             selectedMode = selectedMode,
+                            initialFormat = selectedFormat,
+                            initialTimer = selectedTimer,
                             defaultProfileNickname = authState.effectiveNickname,
                             defaultProfileAvatarId = authState.effectiveAvatarId,
                             showPowerUpGuide = false,
                             onDismissPowerUpGuide = { settingsViewModel.markPowerUpGuideSeen() },
                             onBackClick = { navController.popBackStack() },
-                            onStartMatch = { setups, mode, timedDurationSec ->
-                                gameViewModel.startMatch(setups, mode, timedDurationSec)
+                            onStartMatch = { setups, mode, matchFormat, timedDurationSec, turnTimerSec ->
+                                gameViewModel.startMatch(
+                                    setups = setups,
+                                    mode = mode,
+                                    matchFormat = matchFormat,
+                                    timedDurationSeconds = timedDurationSec,
+                                    turnTimerSeconds = turnTimerSec
+                                )
                                 navController.navigate(LudoRoutes.GAME) {
                                     popUpTo(LudoRoutes.HOME)
                                 }
@@ -678,17 +724,17 @@ class MainActivity : ComponentActivity() {
                                     settingsViewModel.markModeGuideSeen(activeMode)
                                 }
                             },
-                            onPowerUpTapped = { type -> gameViewModel.onPowerUpButtonTapped(type) },
-                            onCancelPowerUpTargeting = { gameViewModel.onCancelPowerUpTargeting() },
-                            onShieldTokenSelected = { tokenId -> gameViewModel.onShieldTokenSelected(tokenId) },
+                            onOpenSettings = { navController.navigate(LudoRoutes.SETTINGS) },
                             onBombSquareSelected = { trackIdx -> gameViewModel.onBombSquareSelected(trackIdx) },
                             onRollDice = { gameViewModel.onRollDiceTapped() },
                             onDiceRollStarted = { gameViewModel.onHumanDiceRollStarted() },
-                            onDiceRollResult = { first, second ->
-                                gameViewModel.onHumanDiceRollCompleted(first, second)
+                            onDiceRollResult = { rolled ->
+                                gameViewModel.onHumanDiceRollCompleted(rolled)
                             },
                             onSelectDieValue = { dieVal -> gameViewModel.onSelectDieValue(dieVal) },
                             onTokenTapped = { tokenRef -> gameViewModel.onTokenTapped(tokenRef) },
+                            onMoveSelected = { move -> gameViewModel.onMoveSelected(move) },
+                            onMoveSequenceSelected = { seq -> gameViewModel.onMoveSequenceSelected(seq) },
                             onPause = { gameViewModel.pauseGame() },
                             onResume = { gameViewModel.resumeGame() },
                             onRestart = { gameViewModel.rematch() },
@@ -702,9 +748,9 @@ class MainActivity : ComponentActivity() {
                                 val winnerColor = finalState.finishOrder.firstOrNull()
                                 val firstHuman = finalState.players.firstOrNull { !it.setup.isBot }
                                 if (firstHuman != null && winnerColor != null) {
-                                    authViewModel.recordLocalMatchOutcomeForGuest(
-                                        won = firstHuman.color == winnerColor
-                                    )
+                                    val humanWon = firstHuman.color == winnerColor ||
+                                        (finalState.isTeamMatch && firstHuman.color == winnerColor.opposite())
+                                    authViewModel.recordLocalMatchOutcomeForGuest(won = humanWon)
                                 }
                                 coroutineScope.launch {
                                     savedGameRepository.clearSavedGame()
@@ -746,6 +792,7 @@ class MainActivity : ComponentActivity() {
                     composable(LudoRoutes.SETTINGS) {
                         SettingsScreen(
                             settings = settings,
+                            onSelectTheme = settingsViewModel::setTheme,
                             onToggleSoundEffects = settingsViewModel::setSoundEffects,
                             onSoundEffectsVolumeLiveChange = { vol ->
                                 soundManager.updateSettings(

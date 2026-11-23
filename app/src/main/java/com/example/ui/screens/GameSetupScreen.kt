@@ -23,7 +23,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AccessAlarm
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SmartToy
@@ -44,12 +47,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.bot.MatchSeatPlanner
@@ -58,44 +61,44 @@ import com.example.bot.SeatOccupancy
 import com.example.data.PlayerAvatarCodec
 import com.example.engine.BotDifficulty
 import com.example.engine.GameModeId
+import com.example.engine.MatchFormat
 import com.example.engine.PlayerColor
 import com.example.engine.PlayerSetup
+import com.example.engine.TurnTimerOption
 import com.example.ui.components.AvatarCustomizerDialog
 import com.example.ui.components.CartoonButton
 import com.example.ui.components.CartoonCard
 import com.example.ui.components.CartoonIconButton
 import com.example.ui.components.PlayerAvatarBadge
-import com.example.ui.game.PowerUpGuideDialog
-import com.example.ui.theme.CobaltPrimary
-import com.example.ui.theme.CreamBackground
-import com.example.ui.theme.CreamSurfaceVariant
-import com.example.ui.theme.InkDark
-import com.example.ui.theme.InkMuted
-import com.example.ui.theme.MintGreen
-import com.example.ui.theme.MintGreenDark
-import com.example.ui.theme.OutlineSoft
-import com.example.ui.theme.SkyTopTint
-import com.example.ui.theme.SunnyGold
-import com.example.ui.theme.palette
+import com.example.ui.game.ModeRulesDialog
+import com.example.ui.theme.LocalLudoTheme
+import com.example.ui.theme.ludoShadow
+import com.example.ui.theme.modeAccentColor
 
 @Composable
 fun GameSetupScreen(
     selectedMode: GameModeId,
+    initialFormat: MatchFormat = if (selectedMode == GameModeId.ELIMINATION) MatchFormat.FOUR_PLAYERS else MatchFormat.ONE_VS_ONE,
+    initialTimer: TurnTimerOption = TurnTimerOption.FIFTEEN,
     defaultProfileNickname: String = "",
     defaultProfileAvatarId: String = "",
     showPowerUpGuide: Boolean = false,
     onDismissPowerUpGuide: () -> Unit = {},
     onBackClick: () -> Unit,
-    onStartMatch: (List<PlayerSetup>, GameModeId, Int) -> Unit
+    onStartMatch: (List<PlayerSetup>, GameModeId, MatchFormat, Int, Int) -> Unit
 ) {
-    val defaultCount = when (selectedMode) {
-        GameModeId.TEAMS_2V2 -> 4
-        GameModeId.ELIMINATION -> 4
-        else -> 2
+    val theme = LocalLudoTheme.current
+    val resolvedInitialFormat = if (initialFormat.playerCount in selectedMode.minPlayers..selectedMode.maxPlayers) {
+        initialFormat
+    } else {
+        MatchFormat.FOUR_PLAYERS
     }
-    var targetPlayerCount by remember(selectedMode) { mutableIntStateOf(defaultCount) }
+
+    var selectedFormat by remember(selectedMode, resolvedInitialFormat) { mutableStateOf(resolvedInitialFormat) }
+    var selectedTimer by remember(selectedMode, initialTimer) { mutableStateOf(initialTimer) }
     var timedMinutes by remember(selectedMode) { mutableIntStateOf(5) }
     var editingAvatarSeatIndex by remember { mutableStateOf<Int?>(null) }
+    var showRulesSheet by remember { mutableStateOf(false) }
 
     val seat1Name = defaultProfileNickname.trim().take(14)
         .takeIf { it.isNotBlank() && !it.equals("Player", ignoreCase = true) }
@@ -104,7 +107,8 @@ fun GameSetupScreen(
         PlayerAvatarCodec.resolve(null, PlayerColor.RED, isBot = false, seed = 0).encode()
     }
 
-    val seats = remember(selectedMode) {
+    val seats = remember(selectedMode, resolvedInitialFormat) {
+        val startFour = resolvedInitialFormat.playerCount == 4
         mutableStateListOf(
             SeatConfig(
                 0,
@@ -116,23 +120,23 @@ fun GameSetupScreen(
             ),
             SeatConfig(
                 1,
-                if (selectedMode == GameModeId.TEAMS_2V2) SeatOccupancy.HUMAN else SeatOccupancy.HUMAN,
+                SeatOccupancy.HUMAN,
                 "Player 2",
-                if (selectedMode == GameModeId.TEAMS_2V2) PlayerColor.GREEN else PlayerColor.YELLOW,
+                if (startFour) PlayerColor.GREEN else PlayerColor.YELLOW,
                 BotDifficulty.MEDIUM,
                 avatarId = PlayerAvatarCodec.CURATED_PRESETS[1].config.encode()
             ),
             SeatConfig(
                 2,
-                if (selectedMode.minPlayers >= 3) SeatOccupancy.BOT else SeatOccupancy.EMPTY,
+                if (startFour) SeatOccupancy.BOT else SeatOccupancy.EMPTY,
                 "Bot 3",
-                if (selectedMode == GameModeId.TEAMS_2V2) PlayerColor.YELLOW else PlayerColor.GREEN,
+                if (startFour) PlayerColor.YELLOW else PlayerColor.GREEN,
                 BotDifficulty.MEDIUM,
                 avatarId = PlayerAvatarCodec.resolve(null, PlayerColor.GREEN, isBot = true, seed = 2).encode()
             ),
             SeatConfig(
                 3,
-                if (selectedMode.minPlayers >= 4) SeatOccupancy.BOT else SeatOccupancy.EMPTY,
+                if (startFour) SeatOccupancy.BOT else SeatOccupancy.EMPTY,
                 "Bot 4",
                 PlayerColor.BLUE,
                 BotDifficulty.MEDIUM,
@@ -142,7 +146,7 @@ fun GameSetupScreen(
     }
 
     fun syncColorsForTwoActiveSeats() {
-        if (selectedMode == GameModeId.TEAMS_2V2) return
+        if (selectedFormat != MatchFormat.ONE_VS_ONE) return
         val activeIndices = seats.indices.filter { seats[it].occupancy != SeatOccupancy.EMPTY }
         if (activeIndices.size == 2) {
             val i0 = activeIndices[0]
@@ -151,20 +155,38 @@ fun GameSetupScreen(
         }
     }
 
-    fun onPlayerCountSelected(count: Int) {
-        if (count !in selectedMode.minPlayers..selectedMode.maxPlayers) return
-        targetPlayerCount = count
+    fun onFormatSelected(format: MatchFormat) {
+        if (format.playerCount !in selectedMode.minPlayers..selectedMode.maxPlayers) return
+        selectedFormat = format
+        val targetCount = format.playerCount
         val activeIndices = seats.indices.filter { seats[it].occupancy != SeatOccupancy.EMPTY }
-        if (activeIndices.size > count) {
+        if (activeIndices.size > targetCount) {
             val toDisable = activeIndices
                 .sortedBy { if (seats[it].occupancy == SeatOccupancy.HUMAN) 0 else 1 }
-                .drop(count)
+                .drop(targetCount)
             for (idx in toDisable) {
                 seats[idx] = seats[idx].copy(occupancy = SeatOccupancy.EMPTY)
             }
+        } else if (activeIndices.size < targetCount) {
+            var needed = targetCount - activeIndices.size
+            for (idx in seats.indices) {
+                if (needed <= 0) break
+                if (seats[idx].occupancy == SeatOccupancy.EMPTY) {
+                    seats[idx] = seats[idx].copy(
+                        occupancy = SeatOccupancy.BOT,
+                        nickname = if (seats[idx].nickname.isBlank()) "Bot ${idx + 1}" else seats[idx].nickname
+                    )
+                    needed -= 1
+                }
+            }
         }
-        if (count == 2) {
+        if (format == MatchFormat.ONE_VS_ONE) {
             syncColorsForTwoActiveSeats()
+        } else if (format == MatchFormat.TEAMS_2V2) {
+            val standardOrder = listOf(PlayerColor.RED, PlayerColor.GREEN, PlayerColor.YELLOW, PlayerColor.BLUE)
+            standardOrder.forEachIndexed { i, color ->
+                seats[i] = seats[i].copy(color = color)
+            }
         }
     }
 
@@ -182,17 +204,17 @@ fun GameSetupScreen(
         seats[idx] = current.copy(occupancy = newOccupancy, nickname = updatedName)
 
         val activeCount = seats.count { it.occupancy != SeatOccupancy.EMPTY }
-        if (activeCount > targetPlayerCount) {
-            targetPlayerCount = activeCount.coerceIn(selectedMode.minPlayers, selectedMode.maxPlayers)
+        if (activeCount > selectedFormat.playerCount && selectedFormat == MatchFormat.ONE_VS_ONE) {
+            selectedFormat = MatchFormat.FOUR_PLAYERS
         }
-        if (targetPlayerCount == 2) {
+        if (selectedFormat == MatchFormat.ONE_VS_ONE) {
             syncColorsForTwoActiveSeats()
         }
     }
 
     fun selectColorForSeat(seatIdx: Int, newColor: PlayerColor) {
         val activeIndices = seats.indices.filter { seats[it].occupancy != SeatOccupancy.EMPTY }
-        if (targetPlayerCount == 2 && activeIndices.size == 2 && seatIdx in activeIndices) {
+        if (selectedFormat == MatchFormat.ONE_VS_ONE && activeIndices.size == 2 && seatIdx in activeIndices) {
             val otherIdx = activeIndices.first { it != seatIdx }
             seats[seatIdx] = seats[seatIdx].copy(color = newColor)
             seats[otherIdx] = seats[otherIdx].copy(color = newColor.opposite())
@@ -207,16 +229,16 @@ fun GameSetupScreen(
         seats[seatIdx] = seats[seatIdx].copy(color = newColor)
     }
 
+    val targetPlayerCount = selectedFormat.playerCount
     val activeSeatsCount = seats.count { it.occupancy != SeatOccupancy.EMPTY }
     val autoFillBotsCount = (targetPlayerCount - activeSeatsCount).coerceAtLeast(0)
-    val modeAccent = modeAccentColor(selectedMode)
+    val modeAccent = modeAccentColor(selectedMode, theme)
+    val readableBlueOnSurface = theme.accessibleAccentOn(theme.blue, theme.surface)
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(colors = listOf(SkyTopTint, CreamBackground))
-            )
+            .background(theme.bg)
             .safeDrawingPadding()
             .testTag("game_setup_screen"),
         contentAlignment = Alignment.TopCenter
@@ -225,9 +247,8 @@ fun GameSetupScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .widthIn(max = 580.dp)
-                .padding(horizontal = 18.dp, vertical = 14.dp)
+                .padding(horizontal = 16.dp, vertical = 14.dp)
         ) {
-            // Header
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -243,31 +264,42 @@ fun GameSetupScreen(
                     Spacer(Modifier.width(12.dp))
                     Text(
                         text = stringResource(R.string.setup_title),
-                        style = MaterialTheme.typography.headlineLarge,
-                        color = InkDark
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = theme.text,
+                        fontWeight = FontWeight.Bold
                     )
                 }
 
                 Surface(
+                    onClick = { showRulesSheet = true },
                     shape = RoundedCornerShape(999.dp),
-                    color = modeAccent.copy(alpha = 0.14f),
-                    border = BorderStroke(1.5.dp, modeAccent)
+                    color = theme.surface,
+                    modifier = Modifier
+                        .ludoShadow(theme.cardShadow, 999.dp)
+                        .testTag("setup_mode_rules_chip")
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Icon(
                             imageVector = modeIcon(selectedMode),
                             contentDescription = null,
-                            tint = modeAccent,
+                            tint = theme.accessibleAccentOn(modeAccent, theme.surface),
                             modifier = Modifier.size(16.dp)
                         )
                         Text(
                             text = selectedMode.title,
                             style = MaterialTheme.typography.labelMedium,
-                            color = InkDark
+                            color = theme.surfaceText,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Icon(
+                            imageVector = Icons.Filled.Info,
+                            contentDescription = "How to play ${selectedMode.title}",
+                            tint = theme.surfaceMutedText,
+                            modifier = Modifier.size(15.dp)
                         )
                     }
                 }
@@ -281,9 +313,8 @@ fun GameSetupScreen(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                // Timed Mode Duration Selector
                 if (selectedMode == GameModeId.TIMED) {
-                    CartoonCard(modifier = Modifier.fillMaxWidth(), borderColor = modeAccent.copy(alpha = 0.45f)) {
+                    CartoonCard(modifier = Modifier.fillMaxWidth()) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -291,13 +322,13 @@ fun GameSetupScreen(
                             Icon(
                                 imageVector = Icons.Filled.Timer,
                                 contentDescription = null,
-                                tint = modeAccent,
+                                tint = readableBlueOnSurface,
                                 modifier = Modifier.size(22.dp)
                             )
                             Text(
                                 text = "Match Duration",
                                 style = MaterialTheme.typography.titleLarge,
-                                color = InkDark
+                                color = theme.surfaceText
                             )
                         }
                         Spacer(Modifier.height(10.dp))
@@ -311,17 +342,17 @@ fun GameSetupScreen(
                                     onClick = { timedMinutes = mins },
                                     modifier = Modifier
                                         .weight(1f)
-                                        .height(50.dp)
+                                        .height(48.dp)
                                         .testTag("timed_duration_${mins}m"),
-                                    shape = RoundedCornerShape(16.dp),
-                                    color = if (chosen) modeAccent else CreamSurfaceVariant,
-                                    border = BorderStroke(2.dp, if (chosen) modeAccent else OutlineSoft)
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = if (chosen) theme.primaryActionBg else theme.surfaceVariant,
+                                    border = BorderStroke(1.5.dp, if (chosen) theme.blue else theme.chipLine)
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
                                         Text(
                                             text = "$mins Minutes",
                                             style = MaterialTheme.typography.titleMedium,
-                                            color = if (chosen) Color.White else InkDark
+                                            color = if (chosen) theme.onPrimaryAction else theme.surfaceText
                                         )
                                     }
                                 }
@@ -330,47 +361,59 @@ fun GameSetupScreen(
                     }
                 }
 
-                // 1. Number of Players
+                // Match Format Selector
                 CartoonCard(modifier = Modifier.fillMaxWidth()) {
-                    Text(
-                        text = stringResource(R.string.setup_players_label),
-                        style = MaterialTheme.typography.titleLarge,
-                        color = InkDark
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Groups,
+                            contentDescription = null,
+                            tint = readableBlueOnSurface,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Text(
+                            text = "Match Format",
+                            style = MaterialTheme.typography.titleLarge,
+                            color = theme.surfaceText
+                        )
+                    }
                     Spacer(Modifier.height(10.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        listOf(2, 3, 4).forEach { count ->
-                            val allowed = count in selectedMode.minPlayers..selectedMode.maxPlayers
-                            val selected = targetPlayerCount == count
+                        MatchFormat.entries.forEach { format ->
+                            val allowed = format.playerCount in selectedMode.minPlayers..selectedMode.maxPlayers
+                            val selected = selectedFormat == format
                             Surface(
-                                onClick = { if (allowed) onPlayerCountSelected(count) },
+                                onClick = { if (allowed) onFormatSelected(format) },
                                 enabled = allowed,
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(50.dp)
-                                    .testTag("player_count_$count"),
-                                shape = RoundedCornerShape(16.dp),
+                                    .height(48.dp)
+                                    .testTag("format_${format.name.lowercase()}"),
+                                shape = RoundedCornerShape(14.dp),
                                 color = when {
-                                    !allowed -> CreamSurfaceVariant.copy(alpha = 0.45f)
-                                    selected -> CobaltPrimary
-                                    else -> CreamSurfaceVariant
+                                    !allowed -> theme.surfaceVariant.copy(alpha = 0.45f)
+                                    selected -> theme.primaryActionBg
+                                    else -> theme.surfaceVariant
                                 },
                                 border = BorderStroke(
-                                    2.dp,
-                                    if (selected && allowed) CobaltPrimary else OutlineSoft
+                                    1.5.dp,
+                                    if (selected && allowed) theme.blue else theme.chipLine
                                 )
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Text(
-                                        text = "$count Players",
-                                        style = MaterialTheme.typography.titleMedium,
+                                        text = format.label,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
                                         color = when {
-                                            !allowed -> InkMuted.copy(alpha = 0.5f)
-                                            selected -> Color.White
-                                            else -> InkDark
+                                            !allowed -> theme.surfaceMutedText.copy(alpha = 0.5f)
+                                            selected -> theme.onPrimaryAction
+                                            else -> theme.surfaceText
                                         }
                                     )
                                 }
@@ -378,19 +421,19 @@ fun GameSetupScreen(
                         }
                     }
 
-                    if (selectedMode == GameModeId.TEAMS_2V2) {
+                    if (selectedFormat == MatchFormat.TEAMS_2V2) {
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            text = "Teams 2v2: Team Sun (Red + Yellow) vs Team Sky (Green + Blue)",
+                            text = "2v2 Team: Team A (Red + Yellow) vs Team B (Green + Blue). Partners sit in opposite corners!",
                             style = MaterialTheme.typography.labelMedium,
-                            color = modeAccent
+                            color = readableBlueOnSurface
                         )
                     } else if (selectedMode == GameModeId.ELIMINATION) {
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            text = "Elimination requires 3 or 4 players",
+                            text = "Elimination requires 4 Players or 2v2 Team",
                             style = MaterialTheme.typography.labelMedium,
-                            color = modeAccent
+                            color = theme.accessibleAccentOn(modeAccent, theme.surface)
                         )
                     }
 
@@ -398,7 +441,7 @@ fun GameSetupScreen(
                         Spacer(Modifier.height(8.dp))
                         Surface(
                             shape = RoundedCornerShape(12.dp),
-                            color = SunnyGold.copy(alpha = 0.22f)
+                            color = theme.surfaceVariant
                         ) {
                             Row(
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
@@ -408,62 +451,62 @@ fun GameSetupScreen(
                                 Icon(
                                     imageVector = Icons.Filled.SmartToy,
                                     contentDescription = null,
-                                    tint = InkDark,
+                                    tint = theme.surfaceText,
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Text(
                                     text = "$autoFillBotsCount empty seat${if (autoFillBotsCount > 1) "s" else ""} will auto-fill with Bots on start",
                                     style = MaterialTheme.typography.labelMedium,
-                                    color = InkDark
+                                    color = theme.surfaceText
                                 )
                             }
                         }
-                    } else if (targetPlayerCount == 2) {
+                    } else if (selectedFormat == MatchFormat.ONE_VS_ONE) {
                         val activeSeats = seats.filter { it.occupancy != SeatOccupancy.EMPTY }
                         if (activeSeats.size == 2) {
                             Spacer(Modifier.height(8.dp))
                             Text(
                                 text = "Opposite corners: ${activeSeats[0].color.displayName} vs ${activeSeats[1].color.displayName}",
                                 style = MaterialTheme.typography.labelMedium,
-                                color = CobaltPrimary
+                                color = readableBlueOnSurface
                             )
                         }
                     }
                 }
 
-                // 2. 4 Seats Configuration
+                // 4 Seats Configuration
                 CartoonCard(modifier = Modifier.fillMaxWidth()) {
                     Text(
                         text = stringResource(R.string.setup_seats_label),
                         style = MaterialTheme.typography.titleLarge,
-                        color = InkDark
+                        color = theme.surfaceText
                     )
                     Text(
                         text = stringResource(R.string.setup_seats_hint),
                         style = MaterialTheme.typography.bodyMedium,
-                        color = InkMuted
+                        color = theme.surfaceMutedText
                     )
                     Spacer(Modifier.height(10.dp))
 
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         for (idx in 0 until 4) {
                             val seat = seats[idx]
-                            val palette = seat.color.palette()
+                            val palette = theme.playerPalette(seat.color)
                             val isEmpty = seat.occupancy == SeatOccupancy.EMPTY
-                            val teamTag = if (selectedMode == GameModeId.TEAMS_2V2) {
+                            val teamTag = if (selectedFormat.isTeamFormat) {
                                 if (seat.color == PlayerColor.RED || seat.color == PlayerColor.YELLOW) {
-                                    "Team Red & Yellow"
+                                    "Team A (Red & Yellow)"
                                 } else {
-                                    "Team Green & Blue"
+                                    "Team B (Green & Blue)"
                                 }
                             } else null
 
                             Surface(
-                                shape = RoundedCornerShape(18.dp),
-                                color = if (isEmpty) CreamSurfaceVariant.copy(alpha = 0.7f) else palette.light,
+                                shape = RoundedCornerShape(16.dp),
+                                color = if (isEmpty) theme.surfaceVariant else palette.light,
                                 border = BorderStroke(
-                                    2.dp,
-                                    if (isEmpty) OutlineSoft else palette.primary.copy(alpha = 0.6f)
+                                    1.5.dp,
+                                    if (isEmpty) theme.chipLine else palette.primary.copy(alpha = 0.55f)
                                 )
                             ) {
                                 Column(modifier = Modifier.padding(12.dp)) {
@@ -481,13 +524,13 @@ fun GameSetupScreen(
                                                     modifier = Modifier
                                                         .size(40.dp)
                                                         .clip(CircleShape)
-                                                        .background(InkMuted.copy(alpha = 0.25f)),
+                                                        .background(theme.timerTrack),
                                                     contentAlignment = Alignment.Center
                                                 ) {
                                                     Icon(
                                                         imageVector = Icons.Filled.Person,
                                                         contentDescription = null,
-                                                        tint = InkMuted,
+                                                        tint = theme.surfaceMutedText,
                                                         modifier = Modifier.size(20.dp)
                                                     )
                                                 }
@@ -521,13 +564,14 @@ fun GameSetupScreen(
                                                 Text(
                                                     text = "Seat ${idx + 1}",
                                                     style = MaterialTheme.typography.titleMedium,
-                                                    color = if (isEmpty) InkMuted else InkDark
+                                                    color = if (isEmpty) theme.surfaceMutedText else theme.surfaceText
                                                 )
                                                 if (teamTag != null) {
                                                     Text(
                                                         text = teamTag,
                                                         style = MaterialTheme.typography.labelSmall,
-                                                        color = palette.dark
+                                                        color = theme.accessibleAccentOn(palette.primary, palette.light),
+                                                        fontWeight = FontWeight.Bold
                                                     )
                                                 }
                                             }
@@ -541,11 +585,11 @@ fun GameSetupScreen(
                                                     modifier = Modifier
                                                         .height(36.dp)
                                                         .testTag("seat_${idx}_${occ.name.lowercase()}"),
-                                                    shape = RoundedCornerShape(12.dp),
-                                                    color = if (chosen) CobaltPrimary else Color.White,
+                                                    shape = RoundedCornerShape(10.dp),
+                                                    color = if (chosen) theme.primaryActionBg else theme.surface,
                                                     border = BorderStroke(
-                                                        1.5.dp,
-                                                        if (chosen) CobaltPrimary else OutlineSoft
+                                                        1.dp,
+                                                        if (chosen) theme.blue else theme.chipLine
                                                     )
                                                 ) {
                                                     Box(
@@ -555,7 +599,7 @@ fun GameSetupScreen(
                                                         Text(
                                                             text = occ.label,
                                                             style = MaterialTheme.typography.labelMedium,
-                                                            color = if (chosen) Color.White else InkDark
+                                                            color = if (chosen) theme.onPrimaryAction else theme.surfaceText
                                                         )
                                                     }
                                                 }
@@ -575,15 +619,18 @@ fun GameSetupScreen(
                                             },
                                             singleLine = true,
                                             placeholder = {
-                                                Text(stringResource(R.string.setup_nickname_hint))
+                                                Text(
+                                                    text = stringResource(R.string.setup_nickname_hint),
+                                                    color = theme.surfaceMutedText
+                                                )
                                             },
                                             colors = OutlinedTextFieldDefaults.colors(
-                                                focusedContainerColor = Color.White,
-                                                unfocusedContainerColor = Color.White,
+                                                focusedContainerColor = theme.surface,
+                                                unfocusedContainerColor = theme.surface,
                                                 focusedBorderColor = palette.primary,
-                                                unfocusedBorderColor = OutlineSoft,
-                                                focusedTextColor = InkDark,
-                                                unfocusedTextColor = InkDark
+                                                unfocusedBorderColor = theme.chipLine,
+                                                focusedTextColor = theme.surfaceText,
+                                                unfocusedTextColor = theme.surfaceText
                                             ),
                                             shape = RoundedCornerShape(14.dp),
                                             modifier = Modifier
@@ -601,7 +648,7 @@ fun GameSetupScreen(
                                                 Text(
                                                     text = "Bot Difficulty",
                                                     style = MaterialTheme.typography.labelMedium,
-                                                    color = InkDark
+                                                    color = theme.surfaceText
                                                 )
                                                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                                     BotDifficulty.entries.forEach { diff ->
@@ -613,11 +660,11 @@ fun GameSetupScreen(
                                                             modifier = Modifier
                                                                 .height(36.dp)
                                                                 .testTag("seat_${idx}_diff_${diff.name.lowercase()}"),
-                                                            shape = RoundedCornerShape(12.dp),
-                                                            color = if (chosen) palette.primary else Color.White,
+                                                            shape = RoundedCornerShape(10.dp),
+                                                            color = if (chosen) palette.primary else theme.surface,
                                                             border = BorderStroke(
-                                                                1.5.dp,
-                                                                if (chosen) palette.dark else OutlineSoft
+                                                                1.dp,
+                                                                if (chosen) palette.primary else theme.chipLine
                                                             )
                                                         ) {
                                                             Box(
@@ -627,7 +674,7 @@ fun GameSetupScreen(
                                                                 Text(
                                                                     text = diff.displayName,
                                                                     style = MaterialTheme.typography.labelMedium,
-                                                                    color = if (chosen) palette.onPrimary else InkDark
+                                                                    color = if (chosen) palette.onPrimary else theme.surfaceText
                                                                 )
                                                             }
                                                         }
@@ -646,12 +693,12 @@ fun GameSetupScreen(
                                             Text(
                                                 text = "Color: ${seat.color.displayName}",
                                                 style = MaterialTheme.typography.labelMedium,
-                                                color = InkDark
+                                                color = theme.surfaceText
                                             )
                                             Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                                                 PlayerColor.entries.forEach { candidate ->
                                                     val isChosen = candidate == seat.color
-                                                    val cPalette = candidate.palette()
+                                                    val cPalette = theme.playerPalette(candidate)
                                                     Box(
                                                         modifier = Modifier
                                                             .size(48.dp)
@@ -672,7 +719,7 @@ fun GameSetupScreen(
                                                                 .background(cPalette.primary)
                                                                 .border(
                                                                     width = if (isChosen) 3.dp else 1.5.dp,
-                                                                    color = if (isChosen) InkDark else Color.White,
+                                                                    color = if (isChosen) theme.surfaceText else theme.tokenEdge,
                                                                     shape = CircleShape
                                                                 ),
                                                             contentAlignment = Alignment.Center
@@ -696,6 +743,60 @@ fun GameSetupScreen(
                         }
                     }
                 }
+
+                // Turn Timer Setting
+                CartoonCard(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.AccessAlarm,
+                            contentDescription = null,
+                            tint = readableBlueOnSurface,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Text(
+                            text = "Turn Timer",
+                            style = MaterialTheme.typography.titleLarge,
+                            color = theme.surfaceText
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "Auto-rolls or plays the best move on timeout — you always keep control of your seat.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = theme.surfaceMutedText
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        TurnTimerOption.entries.forEach { option ->
+                            val chosen = selectedTimer == option
+                            Surface(
+                                onClick = { selectedTimer = option },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(46.dp)
+                                    .testTag("turn_timer_${option.name.lowercase()}"),
+                                shape = RoundedCornerShape(14.dp),
+                                color = if (chosen) theme.primaryActionBg else theme.surfaceVariant,
+                                border = BorderStroke(1.5.dp, if (chosen) theme.blue else theme.chipLine)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text(
+                                        text = option.label,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (chosen) theme.onPrimaryAction else theme.surfaceText
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             Spacer(Modifier.height(12.dp))
@@ -705,22 +806,33 @@ fun GameSetupScreen(
                 onClick = {
                     val resolvedSetups = MatchSeatPlanner.buildMatchSetups(
                         seats = seats.toList(),
-                        targetPlayerCount = targetPlayerCount,
+                        matchFormat = selectedFormat,
                         mode = selectedMode
                     )
-                    onStartMatch(resolvedSetups, selectedMode, timedMinutes * 60)
+                    onStartMatch(
+                        resolvedSetups,
+                        selectedMode,
+                        selectedFormat,
+                        timedMinutes * 60,
+                        selectedTimer.seconds
+                    )
                 },
                 tag = "setup_start_match_button",
                 icon = Icons.Filled.PlayArrow,
-                containerColor = MintGreen,
-                lipColor = MintGreenDark,
-                minHeight = 58.dp,
+                minHeight = 56.dp,
                 modifier = Modifier.fillMaxWidth()
             )
         }
 
-        if (showPowerUpGuide) {
-            PowerUpGuideDialog(onDismiss = onDismissPowerUpGuide)
+        if (showPowerUpGuide || showRulesSheet) {
+            ModeRulesDialog(
+                mode = selectedMode,
+                matchFormat = selectedFormat,
+                onDismiss = {
+                    showRulesSheet = false
+                    if (showPowerUpGuide) onDismissPowerUpGuide()
+                }
+            )
         }
 
         editingAvatarSeatIndex?.let { seatIdx ->

@@ -4,7 +4,6 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,9 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -35,9 +32,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
@@ -53,17 +50,10 @@ import com.example.ui.components.CartoonButton
 import com.example.ui.components.CartoonCard
 import com.example.ui.components.ConfettiOverlay
 import com.example.ui.components.PlayerAvatarBadge
-import com.example.ui.theme.CobaltDark
-import com.example.ui.theme.CobaltPrimary
-import com.example.ui.theme.CreamBackground
-import com.example.ui.theme.InkDark
-import com.example.ui.theme.InkMuted
-import com.example.ui.theme.MintGreen
-import com.example.ui.theme.MintGreenDark
-import com.example.ui.theme.OutlineSoft
-import com.example.ui.theme.SkyTopTint
-import com.example.ui.theme.SunnyGold
 import com.example.ui.online.OnlineRematchUi
+import com.example.ui.theme.AvatarArtPalette
+import com.example.ui.theme.LocalLudoTheme
+import com.example.ui.theme.ludoShadow
 import com.example.ui.theme.palette
 
 @Composable
@@ -73,6 +63,7 @@ fun WinnerScreen(
     onRematchClick: () -> Unit,
     onHomeClick: () -> Unit
 ) {
+    val theme = LocalLudoTheme.current
     val rankedPlayers = remember(gameState.finishOrder, gameState.players) {
         gameState.finishOrder.mapNotNull { color -> gameState.playerByColor(color) }
     }
@@ -83,12 +74,17 @@ fun WinnerScreen(
         podiumScale.animateTo(1f, spring(dampingRatio = 0.55f, stiffness = 300f))
     }
 
+    val titleColor = theme.accessibleAccentOn(theme.blue, theme.bg)
+    val winnerHeadlineColor = theme.accessibleAccentOn(
+        winner?.color?.palette(theme)?.primary ?: theme.blue,
+        theme.bg
+    )
+    val medalBlend = if (theme.isDarkSurface) 0.24f else 0.20f
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(colors = listOf(SkyTopTint, CreamBackground))
-            )
+            .background(theme.bg)
             .safeDrawingPadding()
             .testTag("winner_screen"),
         contentAlignment = Alignment.TopCenter
@@ -105,14 +101,14 @@ fun WinnerScreen(
                 Icon(
                     imageVector = Icons.Filled.EmojiEvents,
                     contentDescription = null,
-                    tint = SunnyGold,
+                    tint = theme.crownIcon,
                     modifier = Modifier.size(56.dp)
                 )
                 Spacer(Modifier.height(6.dp))
                 Text(
                     text = stringResource(R.string.winner_title),
                     style = MaterialTheme.typography.displayMedium,
-                    color = CobaltPrimary,
+                    color = titleColor,
                     textAlign = TextAlign.Center
                 )
                 val headline = when {
@@ -129,20 +125,21 @@ fun WinnerScreen(
                     Text(
                         text = headline,
                         style = MaterialTheme.typography.titleLarge,
-                        color = winner?.color?.palette()?.dark ?: CobaltPrimary,
+                        color = winnerHeadlineColor,
                         textAlign = TextAlign.Center
                     )
                 }
                 Spacer(Modifier.height(8.dp))
                 Surface(
+                    modifier = Modifier.ludoShadow(theme.cardShadow, 999.dp),
                     shape = RoundedCornerShape(999.dp),
-                    color = Color.White,
-                    border = BorderStroke(1.5.dp, OutlineSoft)
+                    color = theme.surface,
+                    border = BorderStroke(1.dp, theme.chipLine)
                 ) {
                     Text(
-                        text = "${gameState.mode.title} • ${gameState.players.size} Players",
+                        text = "${gameState.mode.title} • ${gameState.matchFormat.label}",
                         style = MaterialTheme.typography.labelMedium,
-                        color = InkMuted,
+                        color = theme.surfaceMutedText,
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
                     )
                 }
@@ -156,8 +153,8 @@ fun WinnerScreen(
                         scaleX = podiumScale.value
                         scaleY = podiumScale.value
                     },
-                borderColor = SunnyGold,
-                cornerRadius = 28.dp
+                borderColor = theme.crownIcon.copy(alpha = 0.70f),
+                cornerRadius = 26.dp
             ) {
                 Row(
                     modifier = Modifier
@@ -171,8 +168,8 @@ fun WinnerScreen(
                         player = rankedPlayers.getOrNull(1),
                         mode = gameState.mode,
                         pillarHeight = 112.dp,
-                        pillarColor = Color(0xFFDCE3F0),
-                        badgeColor = Color(0xFF8A99B5),
+                        pillarColor = lerp(theme.surface, AvatarArtPalette.medalSilver, medalBlend),
+                        badgeColor = AvatarArtPalette.medalSilver,
                         modifier = Modifier.weight(1f)
                     )
                     PodiumPillar(
@@ -180,8 +177,8 @@ fun WinnerScreen(
                         player = rankedPlayers.getOrNull(0),
                         mode = gameState.mode,
                         pillarHeight = 152.dp,
-                        pillarColor = Color(0xFFFFEA9F),
-                        badgeColor = SunnyGold,
+                        pillarColor = lerp(theme.surface, AvatarArtPalette.medalGold, medalBlend),
+                        badgeColor = AvatarArtPalette.medalGold,
                         modifier = Modifier.weight(1f)
                     )
                     PodiumPillar(
@@ -189,8 +186,8 @@ fun WinnerScreen(
                         player = rankedPlayers.getOrNull(2),
                         mode = gameState.mode,
                         pillarHeight = 86.dp,
-                        pillarColor = Color(0xFFF7D7BD),
-                        badgeColor = Color(0xFFCD7F32),
+                        pillarColor = lerp(theme.surface, AvatarArtPalette.medalBronze, medalBlend),
+                        badgeColor = AvatarArtPalette.medalBronze,
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -198,11 +195,12 @@ fun WinnerScreen(
                 val fourth = rankedPlayers.getOrNull(3)
                 if (fourth != null) {
                     Spacer(Modifier.height(14.dp))
+                    val fourthPalette = fourth.color.palette(theme)
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(14.dp),
-                        color = fourth.color.palette().light,
-                        border = BorderStroke(1.5.dp, OutlineSoft)
+                        color = fourthPalette.light,
+                        border = BorderStroke(1.dp, theme.chipLine)
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
@@ -226,7 +224,7 @@ fun WinnerScreen(
                                 Text(
                                     text = "4th Place • ${fourth.nickname}",
                                     style = MaterialTheme.typography.titleMedium,
-                                    color = InkDark
+                                    color = theme.surfaceText
                                 )
                             }
                             val fourthStat = buildString {
@@ -234,7 +232,8 @@ fun WinnerScreen(
                                     if (gameState.mode == GameModeId.TIMED) {
                                         "${fourth.score} pts"
                                     } else {
-                                        "${fourth.finishedTokenCount}/4 Home"
+                                        val goal = if (gameState.mode == GameModeId.QUICK) 1 else 4
+                                        "${fourth.finishedTokenCount}/$goal Home"
                                     }
                                 )
                                 if (fourth.capturesMade > 0) {
@@ -244,7 +243,7 @@ fun WinnerScreen(
                             Text(
                                 text = fourthStat,
                                 style = MaterialTheme.typography.labelMedium,
-                                color = InkMuted
+                                color = theme.surfaceMutedText
                             )
                         }
                     }
@@ -258,10 +257,11 @@ fun WinnerScreen(
                 if (onlineRematchUi != null) {
                     Surface(
                         shape = RoundedCornerShape(16.dp),
-                        color = Color.White,
-                        border = BorderStroke(1.5.dp, CobaltPrimary.copy(alpha = 0.45f)),
+                        color = theme.surface,
+                        border = BorderStroke(1.5.dp, theme.blue.copy(alpha = 0.45f)),
                         modifier = Modifier
                             .fillMaxWidth()
+                            .ludoShadow(theme.cardShadow, 16.dp)
                             .testTag("online_rematch_status_card")
                     ) {
                         Text(
@@ -271,7 +271,7 @@ fun WinnerScreen(
                                 "Rematch Votes: ${onlineRematchUi.votedCount}/${onlineRematchUi.totalRemainingHumans} • Starts when everyone agrees"
                             },
                             style = MaterialTheme.typography.labelLarge,
-                            color = InkDark,
+                            color = theme.surfaceText,
                             textAlign = TextAlign.Center,
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
                         )
@@ -288,8 +288,7 @@ fun WinnerScreen(
                     tag = "winner_rematch_button",
                     icon = Icons.Filled.Refresh,
                     enabled = onlineRematchUi == null || (!onlineRematchUi.myVoted && !onlineRematchUi.isSubmitting),
-                    containerColor = MintGreen,
-                    lipColor = MintGreenDark,
+                    containerColor = theme.green,
                     modifier = Modifier.fillMaxWidth()
                 )
                 CartoonButton(
@@ -297,8 +296,8 @@ fun WinnerScreen(
                     onClick = onHomeClick,
                     tag = "winner_home_button",
                     icon = Icons.Filled.Home,
-                    containerColor = CobaltPrimary,
-                    lipColor = CobaltDark,
+                    containerColor = theme.primaryActionBg,
+                    contentColor = theme.onPrimaryAction,
                     modifier = Modifier.fillMaxWidth()
                 )
             }
@@ -322,6 +321,11 @@ private fun PodiumPillar(
     badgeColor: Color,
     modifier: Modifier = Modifier
 ) {
+    val theme = LocalLudoTheme.current
+    val resolvedPillarBg = if (player != null) pillarColor else theme.surfaceVariant
+    val resolvedBadgeBg = if (player != null) badgeColor else theme.chipLine
+    val badgeTextColor = theme.contrastingTextOn(resolvedBadgeBg)
+
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally
@@ -341,7 +345,7 @@ private fun PodiumPillar(
             Text(
                 text = player.nickname,
                 style = MaterialTheme.typography.titleMedium,
-                color = InkDark,
+                color = theme.surfaceText,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center
@@ -350,7 +354,7 @@ private fun PodiumPillar(
                 Text(
                     text = "Bot • ${player.setup.botDifficulty.displayName}",
                     style = MaterialTheme.typography.labelSmall,
-                    color = InkMuted,
+                    color = theme.surfaceMutedText,
                     textAlign = TextAlign.Center
                 )
             }
@@ -364,8 +368,8 @@ private fun PodiumPillar(
                 .fillMaxWidth()
                 .height(pillarHeight),
             shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 10.dp, bottomEnd = 10.dp),
-            color = if (player != null) pillarColor else Color(0xFFF0EDE6),
-            border = BorderStroke(2.dp, if (player != null) badgeColor else OutlineSoft)
+            color = resolvedPillarBg,
+            border = BorderStroke(1.5.dp, if (player != null) badgeColor else theme.chipLine)
         ) {
             Column(
                 modifier = Modifier.padding(8.dp),
@@ -376,13 +380,13 @@ private fun PodiumPillar(
                     modifier = Modifier
                         .size(34.dp)
                         .clip(CircleShape)
-                        .background(if (player != null) badgeColor else OutlineSoft),
+                        .background(resolvedBadgeBg),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
                         text = "#$rank",
                         style = MaterialTheme.typography.titleMedium,
-                        color = Color.White
+                        color = badgeTextColor
                     )
                 }
                 if (player != null) {
@@ -391,16 +395,17 @@ private fun PodiumPillar(
                         text = if (mode == GameModeId.TIMED) {
                             "${player.score} pts"
                         } else {
-                            "${player.finishedTokenCount}/4"
+                            val goal = if (mode == GameModeId.QUICK) 1 else 4
+                            "${player.finishedTokenCount}/$goal"
                         },
                         style = MaterialTheme.typography.labelSmall,
-                        color = InkMuted
+                        color = theme.surfaceMutedText
                     )
                     if (player.capturesMade > 0) {
                         Text(
                             text = "${player.capturesMade} KO",
                             style = MaterialTheme.typography.labelSmall,
-                            color = InkDark
+                            color = theme.surfaceText
                         )
                     }
                 }

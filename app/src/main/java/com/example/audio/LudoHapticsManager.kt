@@ -44,10 +44,12 @@ class LudoHapticsManager(context: Context) {
     fun vibratePowerUpPickup(type: PowerUpType) {
         if (!enabled) return
         when (type) {
+            PowerUpType.ROCKET ->
+                triggerWaveform(longArrayOf(0, 20, 20, 35, 20, 55), intArrayOf(0, 140, 0, 190, 0, 235))
+            PowerUpType.GOLDEN_DICE ->
+                triggerWaveform(longArrayOf(0, 25, 30, 25, 30, 35), intArrayOf(0, 130, 0, 160, 0, 200))
             PowerUpType.SHIELD ->
                 triggerWaveform(longArrayOf(0, 30, 40, 45), intArrayOf(0, 140, 0, 190))
-            PowerUpType.DOUBLE_DICE ->
-                triggerWaveform(longArrayOf(0, 25, 30, 25, 30, 35), intArrayOf(0, 130, 0, 160, 0, 200))
             PowerUpType.BOMB_TRAP ->
                 triggerWaveform(longArrayOf(0, 45, 35, 30), intArrayOf(0, 180, 0, 140))
         }
@@ -56,10 +58,12 @@ class LudoHapticsManager(context: Context) {
     fun vibratePowerUpActivate(type: PowerUpType) {
         if (!enabled) return
         when (type) {
+            PowerUpType.ROCKET ->
+                triggerWaveform(longArrayOf(0, 22, 18, 40, 18, 60), intArrayOf(0, 150, 0, 200, 0, 245))
+            PowerUpType.GOLDEN_DICE ->
+                triggerWaveform(longArrayOf(0, 28, 28, 28, 28, 45), intArrayOf(0, 150, 0, 180, 0, 230))
             PowerUpType.SHIELD ->
                 triggerWaveform(longArrayOf(0, 55, 30, 55), intArrayOf(0, 190, 0, 220))
-            PowerUpType.DOUBLE_DICE ->
-                triggerWaveform(longArrayOf(0, 28, 28, 28, 28, 45), intArrayOf(0, 150, 0, 180, 0, 230))
             PowerUpType.BOMB_TRAP ->
                 triggerWaveform(longArrayOf(0, 20, 45, 50), intArrayOf(0, 130, 0, 200))
         }

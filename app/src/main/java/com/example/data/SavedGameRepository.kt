@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.engine.GameModeId
 import com.example.engine.GameState
+import com.example.engine.MatchFormat
 import com.example.online.GameStateFirestoreMapper
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -20,6 +21,7 @@ private val Context.savedGameDataStore: DataStore<Preferences> by preferencesDat
 
 data class SavedGameSummary(
     val mode: GameModeId,
+    val matchFormat: MatchFormat = MatchFormat.FOUR_PLAYERS,
     val activePlayerName: String,
     val playerCount: Int,
     val turnNumber: Int,
@@ -35,6 +37,7 @@ class SavedGameRepository(private val context: Context) {
     private object Keys {
         val STATE_JSON = stringPreferencesKey("saved_game_state_json")
         val MODE = stringPreferencesKey("saved_game_mode")
+        val MATCH_FORMAT = stringPreferencesKey("saved_game_match_format")
         val ACTIVE_NAME = stringPreferencesKey("saved_game_active_name")
         val PLAYER_COUNT = stringPreferencesKey("saved_game_player_count")
         val TURN_NUMBER = stringPreferencesKey("saved_game_turn_number")
@@ -44,11 +47,14 @@ class SavedGameRepository(private val context: Context) {
     val savedGameSummaryFlow: Flow<SavedGameSummary?> = context.savedGameDataStore.data.map { prefs ->
         val json = prefs[Keys.STATE_JSON]
         if (json.isNullOrBlank()) return@map null
-        val mode = GameModeId.entries.firstOrNull { it.name == prefs[Keys.MODE] } ?: GameModeId.CLASSIC
+        val (mode, legacyFormat) = GameModeId.fromLegacyName(prefs[Keys.MODE])
+        val playerCount = prefs[Keys.PLAYER_COUNT]?.toIntOrNull() ?: 2
+        val format = legacyFormat ?: MatchFormat.fromRaw(prefs[Keys.MATCH_FORMAT], fallbackPlayerCount = playerCount)
         SavedGameSummary(
             mode = mode,
+            matchFormat = format,
             activePlayerName = prefs[Keys.ACTIVE_NAME].orEmpty().ifBlank { "Player 1" },
-            playerCount = prefs[Keys.PLAYER_COUNT]?.toIntOrNull() ?: 2,
+            playerCount = playerCount,
             turnNumber = prefs[Keys.TURN_NUMBER]?.toIntOrNull() ?: 1,
             savedAtMs = prefs[Keys.SAVED_AT_MS] ?: 0L
         )
@@ -63,6 +69,7 @@ class SavedGameRepository(private val context: Context) {
         context.savedGameDataStore.edit { prefs ->
             prefs[Keys.STATE_JSON] = json
             prefs[Keys.MODE] = state.mode.name
+            prefs[Keys.MATCH_FORMAT] = state.matchFormat.name
             prefs[Keys.ACTIVE_NAME] = state.activePlayer.nickname
             prefs[Keys.PLAYER_COUNT] = state.players.size.toString()
             prefs[Keys.TURN_NUMBER] = state.turnNumber.toString()
@@ -80,6 +87,7 @@ class SavedGameRepository(private val context: Context) {
         context.savedGameDataStore.edit { prefs ->
             prefs.remove(Keys.STATE_JSON)
             prefs.remove(Keys.MODE)
+            prefs.remove(Keys.MATCH_FORMAT)
             prefs.remove(Keys.ACTIVE_NAME)
             prefs.remove(Keys.PLAYER_COUNT)
             prefs.remove(Keys.TURN_NUMBER)

@@ -4,9 +4,11 @@ import androidx.annotation.Keep
 import com.example.engine.BotDifficulty
 import com.example.engine.GameModeId
 import com.example.engine.GameState
+import com.example.engine.MatchFormat
 import com.example.engine.PlayerColor
 import com.example.engine.PlayerControllerType
 import com.example.engine.PlayerSetup
+import com.example.engine.TurnTimerOption
 import com.google.firebase.Timestamp
 import com.google.firebase.firestore.DocumentId
 import com.google.firebase.firestore.IgnoreExtraProperties
@@ -33,6 +35,7 @@ data class UserProfileDoc(
     val weeklyWins: Long = 0L,
     val weeklyGamesPlayed: Long = 0L,
     val weekKey: String = WeekKeyUtil.currentWeekKey(),
+    val modeWins: Map<String, Long> = emptyMap(),
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
 )
@@ -53,6 +56,7 @@ data class LeaderboardEntryDoc(
     val weeklyWins: Long = 0L,
     val weeklyGamesPlayed: Long = 0L,
     val weekKey: String = WeekKeyUtil.currentWeekKey(),
+    val modeWins: Map<String, Long> = emptyMap(),
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
 ) {
@@ -207,6 +211,8 @@ data class OnlineRoom(
     val roomCode: String,
     val hostUid: String,
     val mode: GameModeId,
+    val matchFormat: MatchFormat = MatchFormat.FOUR_PLAYERS,
+    val turnTimerSeconds: Int = TurnTimerOption.DEFAULT_SECONDS,
     val targetPlayerCount: Int,
     val timedDurationSeconds: Int,
     val status: RoomStatus,

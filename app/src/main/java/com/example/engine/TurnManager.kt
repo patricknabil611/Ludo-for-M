@@ -25,9 +25,9 @@ sealed interface TurnGuardResult {
  * Pure turn-based orchestration and strict turn-ownership validator for Ludo matches.
  *
  * Responsibilities:
- * - Resolves the active player and the token color they currently control (including Teams 2v2 partner control).
+ * - Resolves the active player and the token color they currently control (including 2v2 Team partner control).
  * - Cycles turns clockwise across eligible players, automatically skipping eliminated or finished players.
- * - Enforces that players can only roll, use pre-roll power-ups, or move tokens on their own turn and phase.
+ * - Enforces that players can only roll, place pending bombs, or move tokens on their own turn and phase.
  * - Provides the live ordered turn queue for UI turn-order indicators.
  */
 object TurnManager {
@@ -45,18 +45,23 @@ object TurnManager {
 
     /**
      * Resolves which color's tokens the active player controls on this turn.
-     * In Teams 2v2, once a player sends all 4 tokens home they keep cycling into turns to roll for their partner.
+     * In 2v2 Team format, once a player finishes their tokens (4 home, or 1 home in Quick),
+     * they keep rolling every turn and their rolls move their partner's tokens.
      */
     fun controlledColor(state: GameState, ruleSet: LudoRuleSet): PlayerColor {
         val active = state.activePlayer
-        if (!ruleSet.teamsMode || !active.allTokensHome) return active.color
+        val activeReachedGoal = active.hasReachedGoal(ruleSet.tokensHomeToWin)
+        if (!ruleSet.teamsMode || !activeReachedGoal) return active.color
         val partner = state.playerByColor(active.color.opposite())
-        return if (partner != null && !partner.allTokensHome) partner.color else active.color
+        return if (partner != null && !partner.isEliminated && !partner.hasReachedGoal(ruleSet.tokensHomeToWin)) {
+            partner.color
+        } else {
+            active.color
+        }
     }
 
     /**
-     * Validates that a dice roll (or pre-roll power-up) is legal for [actingColor] (when provided)
-     * in the current [state].
+     * Validates that a dice roll is legal for [actingColor] (when provided) in the current [state].
      */
     fun validateRoll(
         state: GameState,
@@ -114,7 +119,8 @@ object TurnManager {
                 it.color == move.color &&
                 it.toProgress == move.toProgress &&
                 it.toOuterWrap51 == move.toOuterWrap51 &&
-                it.dieValueUsed == move.dieValueUsed
+                it.dieValueUsed == move.dieValueUsed &&
+                it.isJointMove == move.isJointMove
         }
         if (!isLegal) {
             return TurnGuardResult.IllegalTokenMove(TokenRef(move.color, move.tokenId))
@@ -124,7 +130,7 @@ object TurnManager {
 
     /**
      * Validates a direct token tap ([tokenRef]) from a player (optionally scoped to [actingColor]
-     * in online or seat-locked play). Guarantees a player can only move tokens on their turn.
+     * in online or seat-locked play). Matches either token in a Master Joint Token.
      */
     fun validateTokenTap(
         state: GameState,
@@ -153,7 +159,7 @@ object TurnManager {
             )
         }
         val hasLegalMove = state.legalMoves.any {
-            it.color == tokenRef.color && it.tokenId == tokenRef.tokenId
+            it.color == tokenRef.color && it.includesToken(tokenRef.tokenId)
         }
         if (!hasLegalMove) {
             return TurnGuardResult.IllegalTokenMove(tokenRef)
@@ -163,7 +169,7 @@ object TurnManager {
 
     /**
      * Computes the next eligible player index clockwise around the board, skipping eliminated
-     * players and already-finished players (except in Teams 2v2 where a finished teammate
+     * players and already-finished players (except in 2v2 Team format where a finished teammate
      * continues taking turns to roll for their unfinished partner).
      */
     fun nextEligiblePlayerIndex(
@@ -196,7 +202,9 @@ object TurnManager {
         if (candidate.isEliminated) return false
         return if (ruleSet.teamsMode) {
             val partner = players.firstOrNull { it.color == candidate.color.opposite() }
-            !candidate.allTokensHome || partner?.allTokensHome == false
+            val candidateDone = candidate.hasReachedGoal(ruleSet.tokensHomeToWin)
+            val partnerDone = partner == null || partner.isEliminated || partner.hasReachedGoal(ruleSet.tokensHomeToWin)
+            !candidateDone || !partnerDone
         } else {
             candidate.color !in finishOrder
         }
@@ -204,7 +212,6 @@ object TurnManager {
 
     /**
      * Returns the ordered clockwise cycle of eligible players starting from the active player.
-     * Index 0 is the current turn owner; index 1 is up next, etc.
      */
     fun upcomingTurnCycle(state: GameState, ruleSet: LudoRuleSet): List<PlayerState> {
         if (state.players.isEmpty() || state.isMatchFinished) return emptyList()

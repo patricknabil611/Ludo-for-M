@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -46,8 +47,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -55,6 +55,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.engine.GameModeId
+import com.example.engine.MatchFormat
+import com.example.engine.TurnTimerOption
 import com.example.online.OnlineRoom
 import com.example.online.RoomStatus
 import com.example.ui.components.CartoonButton
@@ -62,19 +64,7 @@ import com.example.ui.components.CartoonCard
 import com.example.ui.components.CartoonIconButton
 import com.example.ui.online.OnlineAuthUiState
 import com.example.ui.online.OnlineHubUiState
-import com.example.ui.theme.CobaltDark
-import com.example.ui.theme.CobaltPrimary
-import com.example.ui.theme.CoralPink
-import com.example.ui.theme.CoralPinkDark
-import com.example.ui.theme.CreamBackground
-import com.example.ui.theme.InkDark
-import com.example.ui.theme.InkMuted
-import com.example.ui.theme.MintGreen
-import com.example.ui.theme.MintGreenDark
-import com.example.ui.theme.OutlineSoft
-import com.example.ui.theme.SkyTopTint
-import com.example.ui.theme.SunnyGold
-import com.example.ui.theme.SunnyGoldDark
+import com.example.ui.theme.LocalLudoTheme
 
 /**
  * Online Multiplayer Hub:
@@ -87,9 +77,9 @@ import com.example.ui.theme.SunnyGoldDark
 fun OnlineHubScreen(
     authState: OnlineAuthUiState,
     hubState: OnlineHubUiState,
-    onCreatePrivateRoom: (GameModeId, Int, Int) -> Unit,
+    onCreatePrivateRoom: (GameModeId, MatchFormat, Int, Int) -> Unit,
     onJoinByCode: (String) -> Unit,
-    onStartMatchmaking: (GameModeId, Int, Int) -> Unit,
+    onStartMatchmaking: (GameModeId, MatchFormat, Int, Int) -> Unit,
     onCancelMatchmaking: () -> Unit,
     onFillMatchmakingWithBots: () -> Unit,
     onRejoinRoom: (OnlineRoom) -> Unit,
@@ -97,21 +87,38 @@ fun OnlineHubScreen(
     onSignOut: () -> Unit,
     onBackClick: () -> Unit
 ) {
+    val theme = LocalLudoTheme.current
     var selectedMode by rememberSaveable { mutableStateOf(GameModeId.CLASSIC) }
-    var selectedPlayerCount by rememberSaveable { mutableIntStateOf(2) }
+    var selectedFormat by rememberSaveable { mutableStateOf(MatchFormat.ONE_VS_ONE) }
+    var selectedTimer by rememberSaveable { mutableStateOf(TurnTimerOption.FIFTEEN) }
     var timedDurationSeconds by rememberSaveable { mutableIntStateOf(300) }
     var joinCodeInput by rememberSaveable { mutableStateOf("") }
 
     LaunchedEffect(selectedMode) {
-        if (selectedMode == GameModeId.TEAMS_2V2) {
-            selectedPlayerCount = 4
+        if (selectedMode == GameModeId.ELIMINATION && selectedFormat == MatchFormat.ONE_VS_ONE) {
+            selectedFormat = MatchFormat.FOUR_PLAYERS
         }
     }
+
+    val blueOnBg = theme.accessibleAccentOn(theme.blue, theme.bg)
+    val blueOnSurface = theme.accessibleAccentOn(theme.blue, theme.surface)
+    val greenOnSurface = theme.accessibleAccentOn(theme.green, theme.surface)
+    val statusBg = lerp(theme.surface, theme.green, if (theme.isDarkSurface) 0.20f else 0.12f)
+    val errorBg = lerp(theme.surface, theme.red, if (theme.isDarkSurface) 0.22f else 0.10f)
+    val errorTextColor = theme.accessibleAccentOn(theme.red, errorBg)
+    val chipColors = FilterChipDefaults.filterChipColors(
+        containerColor = theme.surfaceVariant,
+        labelColor = theme.surfaceText,
+        selectedContainerColor = theme.primaryActionBg,
+        selectedLabelColor = theme.onPrimaryAction,
+        disabledContainerColor = theme.surfaceVariant.copy(alpha = 0.5f),
+        disabledLabelColor = theme.surfaceMutedText.copy(alpha = 0.5f)
+    )
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(SkyTopTint, CreamBackground)))
+            .background(theme.bg)
             .safeDrawingPadding()
             .testTag("online_hub_screen"),
         contentAlignment = Alignment.TopCenter
@@ -145,12 +152,12 @@ fun OnlineHubScreen(
                         Text(
                             text = stringResource(R.string.online_hub_title),
                             style = MaterialTheme.typography.headlineMedium,
-                            color = InkDark
+                            color = theme.text
                         )
                         Text(
                             text = authState.effectiveNickname,
                             style = MaterialTheme.typography.labelMedium,
-                            color = CobaltPrimary,
+                            color = blueOnBg,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -162,9 +169,8 @@ fun OnlineHubScreen(
                         icon = Icons.Filled.EmojiEvents,
                         contentDescription = stringResource(R.string.cd_leaderboard),
                         onClick = onOpenLeaderboard,
-                        containerColor = SunnyGold,
-                        iconTint = Color(0xFF2C1E00),
-                        borderColor = SunnyGoldDark,
+                        containerColor = theme.yellow,
+                        iconTint = theme.contrastingTextOn(theme.yellow),
                         modifier = Modifier.testTag("online_hub_leaderboard_button")
                     )
                     CartoonIconButton(
@@ -180,14 +186,14 @@ fun OnlineHubScreen(
             authState.statusBanner?.let { banner ->
                 Surface(
                     shape = RoundedCornerShape(16.dp),
-                    color = MintGreen.copy(alpha = 0.14f),
-                    border = BorderStroke(1.5.dp, MintGreenDark),
+                    color = statusBg,
+                    border = BorderStroke(1.5.dp, theme.green.copy(alpha = 0.65f)),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
                         text = banner,
                         style = MaterialTheme.typography.bodySmall,
-                        color = InkDark,
+                        color = theme.surfaceText,
                         modifier = Modifier.padding(12.dp)
                     )
                 }
@@ -197,20 +203,20 @@ fun OnlineHubScreen(
             hubState.errorMessage?.let { err ->
                 Surface(
                     shape = RoundedCornerShape(16.dp),
-                    color = CoralPink.copy(alpha = 0.14f),
-                    border = BorderStroke(1.5.dp, CoralPink),
+                    color = errorBg,
+                    border = BorderStroke(1.5.dp, theme.red),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
                         text = err,
                         style = MaterialTheme.typography.bodySmall,
-                        color = CoralPink,
+                        color = errorTextColor,
                         modifier = Modifier.padding(12.dp)
                     )
                 }
             }
 
-            // Active Match / Lobby Rejoin Card (for players who left/disconnected and want their seat back)
+            // Active Match / Lobby Rejoin Card
             val rejoinRoom = hubState.activeRooms.firstOrNull {
                 it.status == RoomStatus.PLAYING && !hubState.isSearchingMatchmaking
             } ?: hubState.activeRooms.firstOrNull {
@@ -219,9 +225,9 @@ fun OnlineHubScreen(
             if (rejoinRoom != null) {
                 CartoonCard(
                     modifier = Modifier.fillMaxWidth(),
-                    borderColor = MintGreenDark,
-                    containerColor = Color(0xFFE9FBF2),
-                    cornerRadius = 24.dp
+                    borderColor = theme.green.copy(alpha = 0.65f),
+                    containerColor = statusBg,
+                    cornerRadius = 22.dp
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -236,13 +242,13 @@ fun OnlineHubScreen(
                                     "Open Lobby Waiting"
                                 },
                                 style = MaterialTheme.typography.titleMedium,
-                                color = InkDark,
+                                color = theme.surfaceText,
                                 fontWeight = FontWeight.ExtraBold
                             )
                             Text(
                                 text = "Room ${rejoinRoom.roomCode} • ${rejoinRoom.mode.title}",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = InkMuted
+                                color = theme.surfaceMutedText
                             )
                         }
                         Spacer(Modifier.width(10.dp))
@@ -251,8 +257,7 @@ fun OnlineHubScreen(
                             onClick = { onRejoinRoom(rejoinRoom) },
                             tag = "online_rejoin_button",
                             icon = Icons.Filled.PlayArrow,
-                            containerColor = MintGreen,
-                            lipColor = MintGreenDark,
+                            containerColor = theme.green,
                             minHeight = 48.dp,
                             modifier = Modifier.width(132.dp)
                         )
@@ -264,7 +269,7 @@ fun OnlineHubScreen(
             if (hubState.isSearchingMatchmaking) {
                 MatchmakingSearchCard(
                     mode = selectedMode,
-                    targetCount = selectedPlayerCount,
+                    targetCount = selectedFormat.playerCount,
                     joinedCount = hubState.currentLobbyRoom?.memberUids?.size ?: 1,
                     elapsedSeconds = hubState.matchmakingElapsedSeconds,
                     offerBotFill = hubState.offerMatchmakingBotFill,
@@ -276,13 +281,13 @@ fun OnlineHubScreen(
                 // Match Settings Card (shared by Matchmaking & Create Friend Room)
                 CartoonCard(
                     modifier = Modifier.fillMaxWidth(),
-                    borderColor = CobaltPrimary.copy(alpha = 0.4f),
+                    borderColor = theme.blue.copy(alpha = 0.40f),
                     cornerRadius = 24.dp
                 ) {
                     Text(
                         text = stringResource(R.string.online_match_settings_title),
                         style = MaterialTheme.typography.titleLarge,
-                        color = InkDark
+                        color = theme.surfaceText
                     )
                     Spacer(Modifier.height(10.dp))
 
@@ -290,7 +295,7 @@ fun OnlineHubScreen(
                     Text(
                         text = stringResource(R.string.setup_mode_label),
                         style = MaterialTheme.typography.labelLarge,
-                        color = InkMuted
+                        color = theme.surfaceMutedText
                     )
                     Spacer(Modifier.height(6.dp))
                     Row(
@@ -300,10 +305,18 @@ fun OnlineHubScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         GameModeId.entries.forEach { mode ->
+                            val isSelected = selectedMode == mode
                             FilterChip(
-                                selected = selectedMode == mode,
+                                selected = isSelected,
                                 onClick = { selectedMode = mode },
                                 label = { Text(mode.title) },
+                                colors = chipColors,
+                                border = FilterChipDefaults.filterChipBorder(
+                                    enabled = true,
+                                    selected = isSelected,
+                                    borderColor = theme.chipLine,
+                                    selectedBorderColor = theme.primaryActionBg
+                                ),
                                 modifier = Modifier.testTag("online_mode_chip_${mode.name.lowercase()}")
                             )
                         }
@@ -311,22 +324,58 @@ fun OnlineHubScreen(
 
                     Spacer(Modifier.height(10.dp))
 
-                    // Player count selector
+                    // Match format selector (1v1 / 4 Players / 2v2 Team)
                     Text(
-                        text = stringResource(R.string.setup_players_label),
+                        text = "Match Format",
                         style = MaterialTheme.typography.labelLarge,
-                        color = InkMuted
+                        color = theme.surfaceMutedText
                     )
                     Spacer(Modifier.height(6.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(2, 3, 4).forEach { count ->
-                            val enabled = selectedMode != GameModeId.TEAMS_2V2 || count == 4
+                        MatchFormat.entries.forEach { format ->
+                            val enabled = format.playerCount in selectedMode.minPlayers..selectedMode.maxPlayers
+                            val isSelected = selectedFormat == format
                             FilterChip(
-                                selected = selectedPlayerCount == count,
+                                selected = isSelected,
                                 enabled = enabled,
-                                onClick = { selectedPlayerCount = count },
-                                label = { Text("$count Players") },
-                                modifier = Modifier.testTag("online_players_chip_$count")
+                                onClick = { selectedFormat = format },
+                                label = { Text(format.label) },
+                                colors = chipColors,
+                                border = FilterChipDefaults.filterChipBorder(
+                                    enabled = enabled,
+                                    selected = isSelected,
+                                    borderColor = theme.chipLine,
+                                    selectedBorderColor = theme.primaryActionBg
+                                ),
+                                modifier = Modifier.testTag("online_format_chip_${format.name.lowercase()}")
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.height(10.dp))
+
+                    // Turn timer selector (Off / 10s / 15s / 20s)
+                    Text(
+                        text = "Turn Timer",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = theme.surfaceMutedText
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TurnTimerOption.entries.forEach { option ->
+                            val isSelected = selectedTimer == option
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = { selectedTimer = option },
+                                label = { Text(option.label) },
+                                colors = chipColors,
+                                border = FilterChipDefaults.filterChipBorder(
+                                    enabled = true,
+                                    selected = isSelected,
+                                    borderColor = theme.chipLine,
+                                    selectedBorderColor = theme.primaryActionBg
+                                ),
+                                modifier = Modifier.testTag("online_timer_chip_${option.name.lowercase()}")
                             )
                         }
                     }
@@ -337,19 +386,33 @@ fun OnlineHubScreen(
                         Text(
                             text = "Match Clock",
                             style = MaterialTheme.typography.labelLarge,
-                            color = InkMuted
+                            color = theme.surfaceMutedText
                         )
                         Spacer(Modifier.height(6.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             FilterChip(
                                 selected = timedDurationSeconds == 300,
                                 onClick = { timedDurationSeconds = 300 },
-                                label = { Text("5 Minutes") }
+                                label = { Text("5 Minutes") },
+                                colors = chipColors,
+                                border = FilterChipDefaults.filterChipBorder(
+                                    enabled = true,
+                                    selected = timedDurationSeconds == 300,
+                                    borderColor = theme.chipLine,
+                                    selectedBorderColor = theme.primaryActionBg
+                                )
                             )
                             FilterChip(
                                 selected = timedDurationSeconds == 600,
                                 onClick = { timedDurationSeconds = 600 },
-                                label = { Text("10 Minutes") }
+                                label = { Text("10 Minutes") },
+                                colors = chipColors,
+                                border = FilterChipDefaults.filterChipBorder(
+                                    enabled = true,
+                                    selected = timedDurationSeconds == 600,
+                                    borderColor = theme.chipLine,
+                                    selectedBorderColor = theme.primaryActionBg
+                                )
                             )
                         }
                     }
@@ -358,7 +421,7 @@ fun OnlineHubScreen(
                 // Online Matchmaking Card
                 CartoonCard(
                     modifier = Modifier.fillMaxWidth(),
-                    borderColor = MintGreenDark,
+                    borderColor = theme.green.copy(alpha = 0.55f),
                     cornerRadius = 24.dp
                 ) {
                     Row(
@@ -368,32 +431,36 @@ fun OnlineHubScreen(
                         Icon(
                             imageVector = Icons.Filled.Public,
                             contentDescription = null,
-                            tint = MintGreenDark,
+                            tint = greenOnSurface,
                             modifier = Modifier.size(24.dp)
                         )
                         Text(
                             text = stringResource(R.string.online_matchmaking_title),
                             style = MaterialTheme.typography.titleLarge,
-                            color = InkDark
+                            color = theme.surfaceText
                         )
                     }
                     Spacer(Modifier.height(4.dp))
                     Text(
                         text = stringResource(R.string.online_matchmaking_desc),
                         style = MaterialTheme.typography.bodySmall,
-                        color = InkMuted
+                        color = theme.surfaceMutedText
                     )
                     Spacer(Modifier.height(12.dp))
                     CartoonButton(
                         text = stringResource(R.string.online_find_match),
                         onClick = {
-                            onStartMatchmaking(selectedMode, selectedPlayerCount, timedDurationSeconds)
+                            onStartMatchmaking(
+                                selectedMode,
+                                selectedFormat,
+                                timedDurationSeconds,
+                                selectedTimer.seconds
+                            )
                         },
                         tag = "online_find_match_button",
                         icon = Icons.Filled.Search,
                         enabled = !hubState.isBusy,
-                        containerColor = MintGreen,
-                        lipColor = MintGreenDark,
+                        containerColor = theme.green,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -401,7 +468,7 @@ fun OnlineHubScreen(
                 // Play with Friends Card (Create Room + Join by 6-char Code)
                 CartoonCard(
                     modifier = Modifier.fillMaxWidth(),
-                    borderColor = CobaltPrimary,
+                    borderColor = theme.blue.copy(alpha = 0.55f),
                     cornerRadius = 24.dp
                 ) {
                     Row(
@@ -411,33 +478,38 @@ fun OnlineHubScreen(
                         Icon(
                             imageVector = Icons.Filled.Groups,
                             contentDescription = null,
-                            tint = CobaltPrimary,
+                            tint = blueOnSurface,
                             modifier = Modifier.size(24.dp)
                         )
                         Text(
                             text = stringResource(R.string.online_friends_title),
                             style = MaterialTheme.typography.titleLarge,
-                            color = InkDark
+                            color = theme.surfaceText
                         )
                     }
                     Spacer(Modifier.height(4.dp))
                     Text(
                         text = stringResource(R.string.online_friends_desc),
                         style = MaterialTheme.typography.bodySmall,
-                        color = InkMuted
+                        color = theme.surfaceMutedText
                     )
                     Spacer(Modifier.height(12.dp))
 
                     CartoonButton(
                         text = stringResource(R.string.online_create_room),
                         onClick = {
-                            onCreatePrivateRoom(selectedMode, selectedPlayerCount, timedDurationSeconds)
+                            onCreatePrivateRoom(
+                                selectedMode,
+                                selectedFormat,
+                                timedDurationSeconds,
+                                selectedTimer.seconds
+                            )
                         },
                         tag = "online_create_room_button",
                         icon = Icons.Filled.AddCircle,
                         enabled = !hubState.isBusy,
-                        containerColor = CobaltPrimary,
-                        lipColor = CobaltDark,
+                        containerColor = theme.primaryActionBg,
+                        contentColor = theme.onPrimaryAction,
                         modifier = Modifier.fillMaxWidth()
                     )
 
@@ -457,7 +529,7 @@ fun OnlineHubScreen(
                             singleLine = true,
                             label = { Text(stringResource(R.string.online_room_code_hint)) },
                             leadingIcon = {
-                                Icon(Icons.Filled.Key, contentDescription = null, tint = CobaltPrimary)
+                                Icon(Icons.Filled.Key, contentDescription = null, tint = blueOnSurface)
                             },
                             shape = RoundedCornerShape(16.dp),
                             modifier = Modifier
@@ -470,9 +542,7 @@ fun OnlineHubScreen(
                             onClick = { onJoinByCode(joinCodeInput) },
                             tag = "online_join_room_button",
                             enabled = !hubState.isBusy && joinCodeInput.length == 6,
-                            containerColor = SunnyGold,
-                            lipColor = SunnyGoldDark,
-                            contentColor = Color(0xFF2C1E00),
+                            containerColor = theme.yellow,
                             minHeight = 56.dp,
                             modifier = Modifier.width(104.dp)
                         )
@@ -496,37 +566,41 @@ private fun MatchmakingSearchCard(
     onFillWithBots: () -> Unit,
     onCancel: () -> Unit
 ) {
+    val theme = LocalLudoTheme.current
+    val blueOnSurface = theme.accessibleAccentOn(theme.blue, theme.surface)
+    val offerBg = lerp(theme.surface, theme.yellow, if (theme.isDarkSurface) 0.20f else 0.14f)
+
     CartoonCard(
         modifier = Modifier
             .fillMaxWidth()
             .testTag("matchmaking_searching_card"),
-        borderColor = CobaltPrimary,
-        cornerRadius = 28.dp
+        borderColor = theme.blue.copy(alpha = 0.55f),
+        cornerRadius = 26.dp
     ) {
         Column(
             modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            CircularProgressIndicator(color = CobaltPrimary)
+            CircularProgressIndicator(color = theme.blue)
             Spacer(Modifier.height(14.dp))
             Text(
                 text = "Finding ${mode.title} Match...",
                 style = MaterialTheme.typography.headlineSmall,
-                color = InkDark
+                color = theme.surfaceText
             )
             Spacer(Modifier.height(6.dp))
             Text(
                 text = "$joinedCount / $targetCount players found • ${elapsedSeconds}s elapsed",
                 style = MaterialTheme.typography.titleMedium,
-                color = CobaltPrimary
+                color = blueOnSurface
             )
 
             if (offerBotFill) {
                 Spacer(Modifier.height(14.dp))
                 Surface(
                     shape = RoundedCornerShape(16.dp),
-                    color = Color(0xFFFFF8DF),
-                    border = BorderStroke(1.5.dp, SunnyGoldDark),
+                    color = offerBg,
+                    border = BorderStroke(1.5.dp, theme.yellow),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(
@@ -536,14 +610,14 @@ private fun MatchmakingSearchCard(
                         Text(
                             text = "No full match found within 30 seconds",
                             style = MaterialTheme.typography.titleSmall,
-                            color = InkDark,
+                            color = theme.surfaceText,
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(
                             text = "Fill the remaining empty seats with Medium Bots and start right away, or keep waiting!",
                             style = MaterialTheme.typography.bodySmall,
-                            color = InkMuted
+                            color = theme.surfaceMutedText
                         )
                         Spacer(Modifier.height(10.dp))
                         CartoonButton(
@@ -552,8 +626,7 @@ private fun MatchmakingSearchCard(
                             tag = "matchmaking_fill_bots_button",
                             icon = Icons.Filled.SmartToy,
                             enabled = !isBusy,
-                            containerColor = MintGreen,
-                            lipColor = MintGreenDark,
+                            containerColor = theme.green,
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
@@ -565,8 +638,7 @@ private fun MatchmakingSearchCard(
                 text = stringResource(R.string.online_cancel_search),
                 onClick = onCancel,
                 tag = "matchmaking_cancel_button",
-                containerColor = CoralPink,
-                lipColor = CoralPinkDark,
+                containerColor = theme.red,
                 minHeight = 50.dp,
                 modifier = Modifier.fillMaxWidth()
             )

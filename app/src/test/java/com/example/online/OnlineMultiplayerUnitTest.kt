@@ -6,14 +6,17 @@ import com.example.engine.ChaosEventType
 import com.example.engine.ChaosState
 import com.example.engine.GameModeId
 import com.example.engine.LudoEngine
+import com.example.engine.MatchFormat
 import com.example.engine.PlayerColor
 import com.example.engine.PlayerControllerType
 import com.example.engine.PlayerSetup
 import com.example.engine.PowerUpState
 import com.example.engine.PowerUpTile
 import com.example.engine.PowerUpType
+import com.example.engine.RollOutcome
 import com.example.engine.RuleSetRegistry
 import com.example.engine.TurnPhase
+import com.example.engine.TurnTimerOption
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -72,21 +75,36 @@ class OnlineMultiplayerUnitTest {
     }
 
     @Test
-    fun gameStateFirestoreMapper_roundTripsPowerUpAndChaosStateLosslessly() {
+    fun legacyModesAndPowerUpsMigrateCleanlyToV21() {
+        assertEquals(GameModeId.MAGIC to null, GameModeId.fromLegacyName("POWER_UP"))
+        assertEquals(GameModeId.QUICK to null, GameModeId.fromLegacyName("ONE_TOKEN_RACE"))
+        assertEquals(GameModeId.CLASSIC to MatchFormat.TEAMS_2V2, GameModeId.fromLegacyName("TEAMS"))
+        assertEquals(GameModeId.CLASSIC to MatchFormat.TEAMS_2V2, GameModeId.fromLegacyName("TEAMS_2V2"))
+        assertEquals(GameModeId.TIMED to null, GameModeId.fromLegacyName("TIMED"))
+        assertEquals(GameModeId.CHAOS to null, GameModeId.fromLegacyName("CHAOS"))
+        assertEquals(GameModeId.ELIMINATION to null, GameModeId.fromLegacyName("ELIMINATION"))
+        assertEquals(PowerUpType.GOLDEN_DICE, PowerUpType.fromLegacyName("DOUBLE_DICE"))
+    }
+
+    @Test
+    fun gameStateFirestoreMapper_roundTripsMagicChaosAndFormatStateLosslessly() {
         val setups = listOf(
             PlayerSetup(0, "Alice", PlayerColor.RED, PlayerControllerType.ONLINE_REMOTE),
             PlayerSetup(1, "Bot", PlayerColor.YELLOW, PlayerControllerType.BOT, BotDifficulty.HARD)
         )
-        val engine = LudoEngine(RuleSetRegistry.forMode(GameModeId.POWER_UP), Random(123))
-        val initial = engine.createGame(setups, GameModeId.POWER_UP)
+        val engine = LudoEngine(RuleSetRegistry.forMode(GameModeId.MAGIC, MatchFormat.ONE_VS_ONE), Random(123))
+        val initial = engine.createGame(setups, GameModeId.MAGIC, MatchFormat.ONE_VS_ONE, turnTimerSeconds = 20)
         val modified = initial.copy(
             phase = TurnPhase.AWAITING_MOVE,
-            lastDiceValue = 6,
-            lastRawDiceValue = 6,
+            lastDiceValue = 4,
+            lastRawDiceValue = 4,
+            rolledDice = listOf(6, 4),
+            remainingDice = listOf(6, 4),
+            selectedDieValue = 6,
             players = initial.players.mapIndexed { idx, p ->
                 if (idx == 0) {
                     p.copy(
-                        heldPowerUps = listOf(PowerUpType.SHIELD, PowerUpType.BOMB_TRAP),
+                        goldenDiceCharges = 1,
                         tokens = p.tokens.mapIndexed { tIdx, t ->
                             if (tIdx == 0) t.copy(progress = 12, shieldTurnsRemaining = 2) else t
                         }
@@ -94,8 +112,8 @@ class OnlineMultiplayerUnitTest {
                 } else p
             },
             powerUpState = PowerUpState(
-                tiles = listOf(PowerUpTile(1, 15, PowerUpType.DOUBLE_DICE)),
-                bombs = listOf(BombTrap(2, PlayerColor.RED, 18, 4)),
+                tiles = listOf(PowerUpTile(1, 15, PowerUpType.GOLDEN_DICE)),
+                bombs = listOf(BombTrap(2, PlayerColor.RED, 18, 3)),
                 nextEntityId = 9
             ),
             chaosState = ChaosState(
@@ -114,20 +132,24 @@ class OnlineMultiplayerUnitTest {
 
         assertNotNull(restored)
         restored!!
-        assertEquals(GameModeId.POWER_UP, restored.mode)
+        assertEquals(GameModeId.MAGIC, restored.mode)
+        assertEquals(MatchFormat.ONE_VS_ONE, restored.matchFormat)
+        assertEquals(20, restored.turnTimerSeconds)
         assertEquals(TurnPhase.AWAITING_MOVE, restored.phase)
-        assertEquals(listOf(PowerUpType.SHIELD, PowerUpType.BOMB_TRAP), restored.players[0].heldPowerUps)
+        assertEquals(listOf(6, 4), restored.rolledDice)
+        assertEquals(1, restored.players[0].goldenDiceCharges)
         assertEquals(2, restored.players[0].tokens[0].shieldTurnsRemaining)
         assertEquals(1, restored.powerUpState.tiles.size)
+        assertEquals(PowerUpType.GOLDEN_DICE, restored.powerUpState.tiles.first().type)
         assertEquals(18, restored.powerUpState.bombs.first().trackIndex)
         assertEquals(PlayerColor.RED, restored.powerUpState.bombs.first().ownerColor)
         assertEquals(7 to 33, restored.chaosState.portalPair)
         assertEquals(setOf(2, 14, 28), restored.chaosState.activeSafeTrackIndices)
-        assertTrue("Recomputed legal moves should not be empty on roll 6", restored.legalMoves.isNotEmpty())
+        assertTrue("Recomputed legal moves should not be empty on tray [6, 4]", restored.legalMoves.isNotEmpty())
     }
 
     @Test
-    fun onlineRoom_botTakeoverAndCoordinatorSelectionWorkCorrectly() {
+    fun onlineRoom_coordinatorSelectionAndRoomFormatFieldsWorkCorrectly() {
         val seat0 = OnlineRoomSeat(
             seatIndex = 0,
             color = PlayerColor.RED,
@@ -150,7 +172,9 @@ class OnlineMultiplayerUnitTest {
         val room = OnlineRoom(
             roomCode = "PLAY42",
             hostUid = "u1",
-            mode = GameModeId.CLASSIC,
+            mode = GameModeId.BLOCKADES,
+            matchFormat = MatchFormat.ONE_VS_ONE,
+            turnTimerSeconds = TurnTimerOption.TEN.seconds,
             targetPlayerCount = 2,
             timedDurationSeconds = 300,
             status = RoomStatus.PLAYING,
@@ -160,8 +184,8 @@ class OnlineMultiplayerUnitTest {
             diceSeed = 111L,
             rollSeq = 0,
             turnSeq = 1,
-            lastActionType = OnlineActionType.BOT_TAKEOVER,
-            lastActionSummary = "Host missed 3 turns",
+            lastActionType = OnlineActionType.TIMEOUT,
+            lastActionSummary = "Time up! Auto-moved",
             lastMovedColor = null,
             lastMovedTokenId = -1,
             lastMovedFromProgress = -1,
@@ -172,6 +196,8 @@ class OnlineMultiplayerUnitTest {
             updatedAt = null
         )
 
+        assertEquals(MatchFormat.ONE_VS_ONE, room.matchFormat)
+        assertEquals(10, room.turnTimerSeconds)
         assertTrue(seat0.isEffectiveBot)
         assertEquals(BotDifficulty.MEDIUM, seat0.effectiveBotDifficulty)
         assertEquals(PlayerControllerType.BOT, seat0.toPlayerSetup().controllerType)
@@ -186,13 +212,13 @@ class OnlineMultiplayerUnitTest {
     }
 
     @Test
-    fun savedGameJson_roundTripsPowerUpGameStateLosslessly() {
+    fun savedGameJson_roundTripsMagicGameStateLosslessly() {
         val setups = listOf(
             PlayerSetup(0, "Player 1", PlayerColor.RED, PlayerControllerType.HUMAN_LOCAL),
             PlayerSetup(1, "Bot 2", PlayerColor.YELLOW, PlayerControllerType.BOT, BotDifficulty.MEDIUM)
         )
-        val engine = LudoEngine(RuleSetRegistry.forMode(GameModeId.POWER_UP), Random(99))
-        val initial = engine.createGame(setups, GameModeId.POWER_UP).copy(
+        val engine = LudoEngine(RuleSetRegistry.forMode(GameModeId.MAGIC, MatchFormat.ONE_VS_ONE), Random(99))
+        val initial = engine.createGame(setups, GameModeId.MAGIC, MatchFormat.ONE_VS_ONE).copy(
             turnNumber = 14,
             powerUpState = PowerUpState(
                 tiles = listOf(PowerUpTile(1, 22, PowerUpType.SHIELD)),
@@ -205,7 +231,8 @@ class OnlineMultiplayerUnitTest {
         val restored = com.example.data.SavedGameRepository.decodeGameStateFromJson(json)
 
         assertNotNull(restored)
-        assertEquals(GameModeId.POWER_UP, restored!!.mode)
+        assertEquals(GameModeId.MAGIC, restored!!.mode)
+        assertEquals(MatchFormat.ONE_VS_ONE, restored.matchFormat)
         assertEquals(14, restored.turnNumber)
         assertEquals(1, restored.powerUpState.tiles.size)
         assertEquals(19, restored.powerUpState.bombs.first().trackIndex)
@@ -217,8 +244,8 @@ class OnlineMultiplayerUnitTest {
             PlayerSetup(0, "M", PlayerColor.RED, PlayerControllerType.HUMAN_LOCAL),
             PlayerSetup(1, "Bot", PlayerColor.YELLOW, PlayerControllerType.BOT, BotDifficulty.HARD)
         )
-        val engine = LudoEngine(RuleSetRegistry.forMode(GameModeId.CLASSIC), Random(7))
-        val finished = engine.createGame(setups, GameModeId.CLASSIC).copy(
+        val engine = LudoEngine(RuleSetRegistry.forMode(GameModeId.CLASSIC, MatchFormat.ONE_VS_ONE), Random(7))
+        val finished = engine.createGame(setups, GameModeId.CLASSIC, MatchFormat.ONE_VS_ONE).copy(
             phase = TurnPhase.MATCH_FINISHED,
             finishOrder = listOf(PlayerColor.RED, PlayerColor.YELLOW),
             turnNumber = 42
@@ -243,19 +270,18 @@ class OnlineMultiplayerUnitTest {
     }
 
     @Test
-    fun engineTracksCapturesAndPowerUpsUsedAndMapperPreservesThem() {
+    fun engineTracksCapturesAndMagicItemsUsedAndMapperPreservesThem() {
         val setups = listOf(
             PlayerSetup(0, "Alice", PlayerColor.RED, PlayerControllerType.HUMAN_LOCAL),
             PlayerSetup(1, "Bob", PlayerColor.YELLOW, PlayerControllerType.HUMAN_LOCAL)
         )
-        val engine = LudoEngine(RuleSetRegistry.forMode(GameModeId.POWER_UP), Random(77))
-        var state = engine.createGame(setups, GameModeId.POWER_UP)
-        // Red trackIndex(2) = 2; Red trackIndex(5) = 5. Yellow start = 26 -> progress for track 5 = 31.
+        val engine = LudoEngine(RuleSetRegistry.forMode(GameModeId.MAGIC, MatchFormat.ONE_VS_ONE), Random(77))
+        var state = engine.createGame(setups, GameModeId.MAGIC, MatchFormat.ONE_VS_ONE)
+        // Red token 0 at progress 2 -> rolls 3 -> lands on track 5 (captures Yellow + picks up Shield!)
         state = state.copy(
             players = state.players.map { p ->
                 when (p.color) {
                     PlayerColor.RED -> p.copy(
-                        heldPowerUps = listOf(PowerUpType.DOUBLE_DICE, PowerUpType.SHIELD),
                         tokens = p.tokens.mapIndexed { idx, t -> if (idx == 0) t.copy(progress = 2) else t }
                     )
                     PlayerColor.YELLOW -> p.copy(
@@ -263,30 +289,25 @@ class OnlineMultiplayerUnitTest {
                     )
                     else -> p
                 }
-            }
+            },
+            powerUpState = PowerUpState(
+                tiles = listOf(PowerUpTile(1, 5, PowerUpType.SHIELD)),
+                nextEntityId = 2
+            )
         )
 
-        state = engine.activateShield(state, 0)
-        assertEquals(1, state.playerByColor(PlayerColor.RED)!!.powerUpsUsed)
-
-        state = engine.activateDoubleDice(state)
-        assertEquals(2, state.playerByColor(PlayerColor.RED)!!.powerUpsUsed)
-
-        // Roll 1 + 2 = 3 -> Red token 0 moves from progress 2 to 5 (track 5, capturing Yellow token 0!)
-        val rollOutcome = engine.applyDiceRoll(state, 1, 2)
-        val singleMove = rollOutcome as com.example.engine.RollOutcome.SingleLegalMove
+        val singleMove = engine.applyDiceRoll(state, 3) as RollOutcome.SingleLegalMove
         val moveOutcome = engine.applyMove(singleMove.state, singleMove.move)
         val afterCapture = moveOutcome.state
 
         assertEquals(1, moveOutcome.move.capturedTokens.size)
         assertEquals(1, afterCapture.playerByColor(PlayerColor.RED)!!.capturesMade)
-        assertEquals(2, afterCapture.playerByColor(PlayerColor.RED)!!.powerUpsUsed)
+        assertEquals(1, afterCapture.playerByColor(PlayerColor.RED)!!.powerUpsUsed)
 
-        // Verify Firestore mapper preserves capturesMade & powerUpsUsed
         val mapped = GameStateFirestoreMapper.toFirestoreMap(afterCapture)
         val restored = GameStateFirestoreMapper.fromFirestoreMap(mapped)!!
         assertEquals(1, restored.playerByColor(PlayerColor.RED)!!.capturesMade)
-        assertEquals(2, restored.playerByColor(PlayerColor.RED)!!.powerUpsUsed)
+        assertEquals(1, restored.playerByColor(PlayerColor.RED)!!.powerUpsUsed)
     }
 
     @Test
@@ -295,8 +316,8 @@ class OnlineMultiplayerUnitTest {
             PlayerSetup(0, "M", PlayerColor.RED, PlayerControllerType.HUMAN_LOCAL),
             PlayerSetup(1, "Bot", PlayerColor.YELLOW, PlayerControllerType.BOT, BotDifficulty.HARD)
         )
-        val engine = LudoEngine(RuleSetRegistry.forMode(GameModeId.POWER_UP), Random(11))
-        val base = engine.createGame(setups, GameModeId.POWER_UP)
+        val engine = LudoEngine(RuleSetRegistry.forMode(GameModeId.MAGIC, MatchFormat.ONE_VS_ONE), Random(11))
+        val base = engine.createGame(setups, GameModeId.MAGIC, MatchFormat.ONE_VS_ONE)
         val finished = base.copy(
             phase = TurnPhase.MATCH_FINISHED,
             finishOrder = listOf(PlayerColor.RED, PlayerColor.YELLOW),
@@ -376,7 +397,7 @@ class OnlineMultiplayerUnitTest {
             ),
             com.example.data.MatchHistoryEntry(
                 id = "3",
-                mode = GameModeId.POWER_UP,
+                mode = GameModeId.MAGIC,
                 onlineMatch = true,
                 roomCode = "ROOM88",
                 winnerName = "M",
@@ -400,7 +421,7 @@ class OnlineMultiplayerUnitTest {
         assertEquals(10, overview.overall.tokensHome)
         assertEquals(4, overview.overall.powerUpsUsed)
         assertEquals(GameModeId.CLASSIC, overview.favoriteMode)
-        assertEquals(GameModeId.POWER_UP to 100, overview.bestWinRateMode)
+        assertEquals(GameModeId.MAGIC to 100, overview.bestWinRateMode)
 
         val classic = overview.byMode[GameModeId.CLASSIC]!!
         assertEquals(2, classic.gamesPlayed)
@@ -409,10 +430,10 @@ class OnlineMultiplayerUnitTest {
         assertEquals(4, classic.capturesMade)
         assertEquals(6, classic.tokensHome)
 
-        val powerUp = overview.byMode[GameModeId.POWER_UP]!!
-        assertEquals(1, powerUp.gamesPlayed)
-        assertEquals(1, powerUp.wins)
-        assertEquals(100, powerUp.winRatePercent)
-        assertEquals(4, powerUp.powerUpsUsed)
+        val magic = overview.byMode[GameModeId.MAGIC]!!
+        assertEquals(1, magic.gamesPlayed)
+        assertEquals(1, magic.wins)
+        assertEquals(100, magic.winRatePercent)
+        assertEquals(4, magic.powerUpsUsed)
     }
 }

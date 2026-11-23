@@ -56,11 +56,11 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -71,33 +71,19 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.data.PlayerAvatarCodec
-import com.example.engine.GameModeId
 import com.example.engine.GameState
 import com.example.engine.PlayerColor
 import com.example.ui.components.CartoonButton
 import com.example.ui.components.PlayerAvatarBadge
-import com.example.ui.theme.BluePalette
-import com.example.ui.theme.CobaltPrimary
-import com.example.ui.theme.CoralPink
-import com.example.ui.theme.GreenPalette
-import com.example.ui.theme.InkDark
-import com.example.ui.theme.InkMuted
-import com.example.ui.theme.MintGreen
-import com.example.ui.theme.MintGreenDark
-import com.example.ui.theme.RedPalette
-import com.example.ui.theme.SunnyGold
-import com.example.ui.theme.SunnyGoldDark
-import com.example.ui.theme.YellowPalette
-import com.example.ui.theme.palette
+import com.example.ui.theme.ArcadeLightTheme
+import com.example.ui.theme.LocalLudoTheme
+import com.example.ui.theme.LudoTheme
+import com.example.ui.theme.ludoShadow
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.random.Random
 
-/**
- * Snapshot representing a player's celebratory moment upon moving all four tokens
- * into the center home triangle.
- */
 data class AllTokensHomeCelebrationState(
     val playerName: String,
     val color: PlayerColor,
@@ -132,10 +118,6 @@ data class CelebrationParticle(
     val delaySec: Float
 )
 
-/**
- * Pure-Kotlin state detection and animation math helpers for the all-four-tokens-home
- * celebratory sequence. Covered directly by JVM unit tests.
- */
 object CelebrationSequenceHelper {
 
     const val REQUIRED_HOME_TOKENS = 4
@@ -144,10 +126,6 @@ object CelebrationSequenceHelper {
     const val TOKEN_REVEAL_DURATION_MS = 240L
     const val AUTO_DISMISS_MS = 5000L
 
-    /**
-     * Detects whether any player just crossed from fewer than 4 finished tokens in [prevState]
-     * to all 4 tokens home in [nextState]. Returns null if no player newly completed all 4.
-     */
     fun detectAllFourTokensHome(
         prevState: GameState?,
         nextState: GameState,
@@ -165,7 +143,7 @@ object CelebrationSequenceHelper {
         val rank = if (finishIndex >= 0) finishIndex + 1 else 1
         val isMatchOver = nextState.isMatchFinished
         val isTeamsPartnerContinuation =
-            nextState.mode == GameModeId.TEAMS_2V2 && !isMatchOver
+            nextState.isTeamMatch && !isMatchOver
 
         return AllTokensHomeCelebrationState(
             playerName = newlyCompletedPlayer.nickname,
@@ -180,9 +158,6 @@ object CelebrationSequenceHelper {
         )
     }
 
-    /**
-     * Normalized 0..1 reveal progress for staggered token badge [tokenIndex] (0..3).
-     */
     fun tokenRevealProgress(elapsedMs: Long, tokenIndex: Int): Float {
         val safeIndex = tokenIndex.coerceIn(0, REQUIRED_HOME_TOKENS - 1)
         val startMs = FIRST_TOKEN_REVEAL_DELAY_MS + safeIndex * TOKEN_REVEAL_STAGGER_MS
@@ -191,25 +166,20 @@ object CelebrationSequenceHelper {
             .coerceIn(0f, 1f)
     }
 
-    /**
-     * Generates deterministic dual-cannon confetti particles + upper sparkle wave.
-     */
     fun generateCannonParticles(
         seed: Int,
         accentColor: Color,
-        count: Int = 96
+        count: Int = 96,
+        theme: LudoTheme = ArcadeLightTheme
     ): List<CelebrationParticle> {
         val rng = Random(seed * 7919 + 42)
         val palette = listOf(
             accentColor,
-            SunnyGold,
-            RedPalette.primary,
-            GreenPalette.primary,
-            BluePalette.primary,
-            YellowPalette.primary,
-            CoralPink,
-            MintGreen,
-            CobaltPrimary
+            theme.yellow,
+            theme.red,
+            theme.green,
+            theme.blue,
+            theme.crownIcon
         )
         val shapes = CelebrationParticleShape.entries
 
@@ -218,7 +188,6 @@ object CelebrationSequenceHelper {
             val fromLeftCannon = index % 2 == 0
             val (originX, originY, vx, vy, delaySec) = when (wave) {
                 0, 1 -> {
-                    // Dual bottom corner cannons firing upward and inward
                     val ox = if (fromLeftCannon) -0.02f else 1.02f
                     val oy = 0.86f + rng.nextFloat() * 0.12f
                     val speedX = (0.34f + rng.nextFloat() * 0.56f) * if (fromLeftCannon) 1f else -1f
@@ -227,7 +196,6 @@ object CelebrationSequenceHelper {
                     ParticleLaunch(ox, oy, speedX, speedY, delay)
                 }
                 else -> {
-                    // Gentle overhead celebratory shower
                     val ox = rng.nextFloat()
                     val oy = -0.06f - rng.nextFloat() * 0.10f
                     val speedX = (rng.nextFloat() - 0.5f) * 0.18f
@@ -264,26 +232,22 @@ object CelebrationSequenceHelper {
     )
 }
 
-/**
- * Full-screen choreographed celebration sequence shown when a player moves all four tokens
- * into the home triangle: dual confetti cannons, firework pulse rings, rotating golden sunburst,
- * bouncing trophy badge, staggered 4-token home showcase, and tactile dismiss CTA.
- */
 @Composable
 fun AllTokensHomeCelebrationOverlay(
     celebration: AllTokensHomeCelebrationState,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val playerPalette = celebration.color.palette()
-    val particles = remember(celebration.triggerKey, celebration.color) {
+    val theme = LocalLudoTheme.current
+    val playerPalette = theme.playerPalette(celebration.color)
+    val particles = remember(celebration.triggerKey, celebration.color, theme.id) {
         CelebrationSequenceHelper.generateCannonParticles(
             seed = celebration.triggerKey * 31 + celebration.color.ordinal,
-            accentColor = playerPalette.primary
+            accentColor = playerPalette.primary,
+            theme = theme
         )
     }
 
-    // Frame-accurate elapsed timeline for confetti physics, firework rings & staggered tokens
     var elapsedMs by remember(celebration.triggerKey) { mutableLongStateOf(0L) }
     val cardScale = remember(celebration.triggerKey) { Animatable(0.55f) }
     val trophyScale = remember(celebration.triggerKey) { Animatable(0.25f) }
@@ -354,24 +318,24 @@ fun AllTokensHomeCelebrationOverlay(
                 Brush.radialGradient(
                     colors = listOf(
                         playerPalette.dark.copy(alpha = 0.44f),
-                        InkDark.copy(alpha = 0.70f)
+                        Color.Black.copy(alpha = 0.72f)
                     )
                 )
             )
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
-                onClick = {} // Intercept touches behind the celebration modal
+                onClick = {}
             )
             .testTag("all_tokens_home_celebration_overlay"),
         contentAlignment = Alignment.Center
     ) {
-        // Layer 1: Full-screen firework rings & dual bottom confetti cannons
         Canvas(modifier = Modifier.fillMaxSize()) {
             val elapsedSec = elapsedMs / 1000f
             drawFireworkRings(
                 elapsedSec = elapsedSec,
-                accentColor = playerPalette.primary
+                accentColor = playerPalette.primary,
+                goldColor = theme.yellow
             )
             drawCelebrationParticles(
                 particles = particles,
@@ -379,7 +343,6 @@ fun AllTokensHomeCelebrationOverlay(
             )
         }
 
-        // Layer 2: Spring-bouncing modal celebration card
         Box(
             modifier = Modifier
                 .safeDrawingPadding()
@@ -391,28 +354,19 @@ fun AllTokensHomeCelebrationOverlay(
             contentAlignment = Alignment.Center
         ) {
             Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(32.dp),
-                color = Color.White,
-                border = BorderStroke(4.dp, SunnyGold),
-                shadowElevation = 20.dp
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .ludoShadow(theme.cardShadow, 28.dp),
+                shape = RoundedCornerShape(28.dp),
+                color = theme.surface,
+                border = BorderStroke(3.dp, theme.yellow)
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(
-                            Brush.verticalGradient(
-                                colors = listOf(
-                                    playerPalette.light,
-                                    Color.White,
-                                    Color.White
-                                )
-                            )
-                        )
                         .padding(horizontal = 22.dp, vertical = 22.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    // Rotating Golden Sunburst + Bouncing Trophy Medallion
                     Box(
                         modifier = Modifier.size(118.dp),
                         contentAlignment = Alignment.Center
@@ -420,7 +374,8 @@ fun AllTokensHomeCelebrationOverlay(
                         Canvas(modifier = Modifier.fillMaxSize()) {
                             drawSunburstHalo(
                                 rotationDeg = sunburstAngle,
-                                accentColor = playerPalette.primary
+                                accentColor = playerPalette.primary,
+                                goldColor = theme.yellow
                             )
                         }
 
@@ -441,14 +396,14 @@ fun AllTokensHomeCelebrationOverlay(
                                 size = 78.dp,
                                 contentDescription = celebration.playerName
                             )
+                            val medalFg = theme.contrastingTextOn(theme.yellow)
                             Surface(
                                 modifier = Modifier
                                     .align(Alignment.BottomEnd)
                                     .size(30.dp),
                                 shape = CircleShape,
-                                color = SunnyGold,
-                                border = BorderStroke(2.dp, Color.White),
-                                shadowElevation = 4.dp
+                                color = theme.yellow,
+                                border = BorderStroke(2.dp, theme.surface)
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
@@ -458,7 +413,7 @@ fun AllTokensHomeCelebrationOverlay(
                                             Icons.Filled.WorkspacePremium
                                         },
                                         contentDescription = stringResource(R.string.cd_celebration_trophy),
-                                        tint = InkDark,
+                                        tint = medalFg,
                                         modifier = Modifier.size(18.dp)
                                     )
                                 }
@@ -468,7 +423,6 @@ fun AllTokensHomeCelebrationOverlay(
 
                     Spacer(Modifier.height(10.dp))
 
-                    // Rank / Victory Eyebrow Pill
                     val rankPillText = when {
                         celebration.teamLabel != null && celebration.isMatchOver ->
                             celebration.teamLabel.uppercase()
@@ -477,10 +431,10 @@ fun AllTokensHomeCelebrationOverlay(
                         celebration.rank == 3 -> stringResource(R.string.celebration_rank_third)
                         else -> stringResource(R.string.celebration_rank_generic)
                     }
+                    val pillFg = theme.contrastingTextOn(theme.yellow)
                     Surface(
                         shape = RoundedCornerShape(999.dp),
-                        color = SunnyGold,
-                        border = BorderStroke(2.dp, SunnyGoldDark)
+                        color = theme.yellow
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
@@ -490,13 +444,13 @@ fun AllTokensHomeCelebrationOverlay(
                             Icon(
                                 imageVector = Icons.Filled.Star,
                                 contentDescription = null,
-                                tint = InkDark,
+                                tint = pillFg,
                                 modifier = Modifier.size(15.dp)
                             )
                             Text(
                                 text = rankPillText,
                                 style = MaterialTheme.typography.labelLarge,
-                                color = InkDark,
+                                color = pillFg,
                                 fontWeight = FontWeight.ExtraBold,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -504,7 +458,7 @@ fun AllTokensHomeCelebrationOverlay(
                             Icon(
                                 imageVector = Icons.Filled.Star,
                                 contentDescription = null,
-                                tint = InkDark,
+                                tint = pillFg,
                                 modifier = Modifier.size(15.dp)
                             )
                         }
@@ -512,21 +466,19 @@ fun AllTokensHomeCelebrationOverlay(
 
                     Spacer(Modifier.height(12.dp))
 
-                    // Player Headline
                     Text(
                         text = stringResource(
                             R.string.celebration_headline_all_home,
                             celebration.playerName
                         ),
                         style = MaterialTheme.typography.headlineSmall,
-                        color = InkDark,
+                        color = theme.surfaceText,
                         fontWeight = FontWeight.ExtraBold,
                         textAlign = TextAlign.Center
                     )
 
                     Spacer(Modifier.height(6.dp))
 
-                    // Contextual Subtitle
                     val subtitle = when {
                         celebration.isMatchOver ->
                             stringResource(R.string.celebration_subtitle_match_over)
@@ -538,18 +490,17 @@ fun AllTokensHomeCelebrationOverlay(
                     Text(
                         text = subtitle,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = InkMuted,
+                        color = theme.surfaceMutedText,
                         textAlign = TextAlign.Center
                     )
 
                     Spacer(Modifier.height(18.dp))
 
-                    // Staggered 4-Token Home Showcase
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(22.dp),
-                        color = playerPalette.light.copy(alpha = 0.72f),
-                        border = BorderStroke(2.dp, playerPalette.primary.copy(alpha = 0.45f))
+                        shape = RoundedCornerShape(20.dp),
+                        color = playerPalette.light,
+                        border = BorderStroke(1.5.dp, playerPalette.primary.copy(alpha = 0.45f))
                     ) {
                         Column(
                             modifier = Modifier
@@ -577,15 +528,17 @@ fun AllTokensHomeCelebrationOverlay(
 
                             Spacer(Modifier.height(10.dp))
 
+                            val badgeBg = lerp(theme.surface, theme.green, 0.16f)
+                            val badgeFg = theme.accessibleAccentOn(theme.green, badgeBg)
                             Surface(
                                 shape = RoundedCornerShape(999.dp),
-                                color = MintGreen.copy(alpha = 0.18f),
-                                border = BorderStroke(1.5.dp, MintGreenDark)
+                                color = badgeBg,
+                                border = BorderStroke(1.5.dp, theme.green)
                             ) {
                                 Text(
                                     text = stringResource(R.string.celebration_tokens_home_badge),
                                     style = MaterialTheme.typography.labelMedium,
-                                    color = MintGreenDark,
+                                    color = badgeFg,
                                     fontWeight = FontWeight.ExtraBold,
                                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
                                 )
@@ -595,18 +548,18 @@ fun AllTokensHomeCelebrationOverlay(
 
                     Spacer(Modifier.height(18.dp))
 
-                    // Primary CTA
                     val ctaText = if (celebration.isMatchOver) {
                         stringResource(R.string.celebration_cta_see_podium)
                     } else {
                         stringResource(R.string.celebration_cta_continue)
                     }
+                    val ctaBg = if (celebration.isMatchOver) theme.yellow else theme.primaryActionBg
+                    val ctaFg = if (celebration.isMatchOver) theme.contrastingTextOn(theme.yellow) else theme.onPrimaryAction
                     CartoonButton(
                         text = ctaText,
                         onClick = onDismiss,
-                        containerColor = if (celebration.isMatchOver) SunnyGold else playerPalette.primary,
-                        lipColor = if (celebration.isMatchOver) SunnyGoldDark else playerPalette.dark,
-                        contentColor = if (celebration.isMatchOver) InkDark else playerPalette.onPrimary,
+                        containerColor = ctaBg,
+                        contentColor = ctaFg,
                         icon = if (celebration.isMatchOver) Icons.Filled.EmojiEvents else Icons.Filled.PlayArrow,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -615,13 +568,12 @@ fun AllTokensHomeCelebrationOverlay(
 
                     Spacer(Modifier.height(12.dp))
 
-                    // Subtle auto-advance bar so players know the popup continues cleanly
                     Box(
                         modifier = Modifier
                             .fillMaxWidth(0.55f)
                             .height(5.dp)
                             .clip(RoundedCornerShape(999.dp))
-                            .background(playerPalette.primary.copy(alpha = 0.16f))
+                            .background(theme.timerTrack)
                     ) {
                         Box(
                             modifier = Modifier
@@ -643,19 +595,13 @@ private fun StaggeredHomeTokenBadge(
     tokenNumber: Int,
     revealProgress: Float
 ) {
-    val palette = color.palette()
+    val theme = LocalLudoTheme.current
+    val playerColor = theme.playerColor(color)
     val tokenCd = stringResource(R.string.cd_celebration_token_home, tokenNumber)
-    // Elastic pop curve: slight overshoot around 0.72 then settles cleanly at 1.0
     val popScale = when {
         revealProgress <= 0f -> 0.25f
-        revealProgress < 0.72f -> {
-            val t = revealProgress / 0.72f
-            0.25f + t * 0.92f // rises to 1.17x
-        }
-        else -> {
-            val t = (revealProgress - 0.72f) / 0.28f
-            1.17f - t * 0.17f // settles cleanly to 1.0x
-        }
+        revealProgress < 0.72f -> 0.25f + (revealProgress / 0.72f) * 0.92f
+        else -> 1.17f - ((revealProgress - 0.72f) / 0.28f) * 0.17f
     }
     val alpha = (revealProgress * 1.4f).coerceIn(0f, 1f)
 
@@ -665,19 +611,16 @@ private fun StaggeredHomeTokenBadge(
             .semantics { contentDescription = tokenCd },
         contentAlignment = Alignment.Center
     ) {
-        // Golden home slot ring
         Surface(
             modifier = Modifier.size(52.dp),
             shape = CircleShape,
-            color = Color.White,
+            color = theme.surface,
             border = BorderStroke(
-                width = 2.5.dp,
-                color = if (revealProgress > 0.35f) SunnyGold else palette.primary.copy(alpha = 0.25f)
-            ),
-            shadowElevation = if (revealProgress > 0.5f) 4.dp else 0.dp
+                width = 2.dp,
+                color = if (revealProgress > 0.35f) theme.yellow else playerColor.copy(alpha = 0.25f)
+            )
         ) {}
 
-        // Glossy cartoon Ludo pawn icon popping in
         Canvas(
             modifier = Modifier
                 .size(40.dp)
@@ -686,37 +629,25 @@ private fun StaggeredHomeTokenBadge(
         ) {
             val r = size.minDimension * 0.42f
             val center = Offset(size.width / 2f, size.height / 2f)
-            // Drop shadow
             drawCircle(
-                color = palette.dark.copy(alpha = 0.32f),
+                color = Color.Black.copy(alpha = 0.22f),
                 radius = r,
-                center = center + Offset(0f, 3.dp.toPx())
+                center = center + Offset(0f, 2.dp.toPx())
             )
-            // Outer white rim
+            drawCircle(color = playerColor, radius = r, center = center)
             drawCircle(
-                color = Color.White,
-                radius = r,
+                color = theme.tokenEdge,
+                radius = r - 1.dp.toPx(),
+                center = center,
+                style = Stroke(width = 2.5.dp.toPx())
+            )
+            drawCircle(
+                color = Color.White.copy(alpha = 0.50f),
+                radius = r * 0.38f,
                 center = center
-            )
-            // Vibrant colored pawn body
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(palette.primary, palette.dark),
-                    center = center - Offset(r * 0.28f, r * 0.28f),
-                    radius = r * 1.35f
-                ),
-                radius = r * 0.82f,
-                center = center
-            )
-            // Cartoon glossy highlight dot
-            drawCircle(
-                color = Color.White.copy(alpha = 0.65f),
-                radius = r * 0.24f,
-                center = center - Offset(r * 0.26f, r * 0.26f)
             )
         }
 
-        // Crisp Mint Check badge in corner once popped in
         if (revealProgress >= 0.65f) {
             val checkScale = ((revealProgress - 0.65f) / 0.35f).coerceIn(0f, 1f)
             Surface(
@@ -725,15 +656,14 @@ private fun StaggeredHomeTokenBadge(
                     .size(20.dp)
                     .scale(checkScale),
                 shape = CircleShape,
-                color = MintGreen,
-                border = BorderStroke(1.5.dp, Color.White),
-                shadowElevation = 2.dp
+                color = theme.green,
+                border = BorderStroke(1.5.dp, theme.surface)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
                         imageVector = Icons.Filled.Check,
                         contentDescription = null,
-                        tint = Color.White,
+                        tint = theme.contrastingTextOn(theme.green),
                         modifier = Modifier.size(13.dp)
                     )
                 }
@@ -744,7 +674,8 @@ private fun StaggeredHomeTokenBadge(
 
 private fun DrawScope.drawSunburstHalo(
     rotationDeg: Float,
-    accentColor: Color
+    accentColor: Color,
+    goldColor: Color
 ) {
     val center = Offset(size.width / 2f, size.height / 2f)
     val outerR = size.minDimension * 0.50f
@@ -771,18 +702,14 @@ private fun DrawScope.drawSunburstHalo(
             }
             drawPath(
                 path = path,
-                color = if (i % 2 == 0) {
-                    SunnyGold.copy(alpha = 0.55f)
-                } else {
-                    accentColor.copy(alpha = 0.28f)
-                }
+                color = if (i % 2 == 0) goldColor.copy(alpha = 0.52f) else accentColor.copy(alpha = 0.28f)
             )
         }
     }
 
     drawCircle(
         brush = Brush.radialGradient(
-            colors = listOf(SunnyGold.copy(alpha = 0.45f), Color.Transparent),
+            colors = listOf(goldColor.copy(alpha = 0.42f), Color.Transparent),
             center = center,
             radius = outerR
         ),
@@ -790,7 +717,7 @@ private fun DrawScope.drawSunburstHalo(
         center = center
     )
     drawCircle(
-        color = SunnyGold.copy(alpha = 0.35f),
+        color = goldColor.copy(alpha = 0.32f),
         radius = innerR,
         center = center
     )
@@ -798,7 +725,8 @@ private fun DrawScope.drawSunburstHalo(
 
 private fun DrawScope.drawFireworkRings(
     elapsedSec: Float,
-    accentColor: Color
+    accentColor: Color,
+    goldColor: Color
 ) {
     val center = Offset(size.width / 2f, size.height * 0.48f)
     val maxRadius = size.minDimension * 0.62f
@@ -810,7 +738,7 @@ private fun DrawScope.drawFireworkRings(
             val eased = 1f - (1f - localT) * (1f - localT)
             val radius = maxRadius * (0.12f + eased * 0.88f)
             val alpha = (1f - localT).coerceIn(0f, 1f) * 0.65f
-            val ringColor = if (idx % 2 == 0) SunnyGold else accentColor
+            val ringColor = if (idx % 2 == 0) goldColor else accentColor
             drawCircle(
                 color = ringColor.copy(alpha = alpha),
                 radius = radius,
@@ -818,7 +746,6 @@ private fun DrawScope.drawFireworkRings(
                 style = Stroke(width = (8.dp.toPx() * (1f - localT * 0.7f)).coerceAtLeast(2f))
             )
 
-            // Spark dots riding the expanding ring
             val sparkCount = 12
             for (s in 0 until sparkCount) {
                 val theta = (s.toFloat() / sparkCount) * 2f * PI.toFloat() + idx * 0.26f
@@ -845,7 +772,6 @@ private fun DrawScope.drawCelebrationParticles(
         val t = elapsedSec - p.delaySec
         if (t <= 0f) return@forEach
 
-        // Smooth fade-out after 3.2s so particles clear cleanly
         val fade = when {
             t < 0.08f -> t / 0.08f
             t > 3.2f -> (1f - (t - 3.2f) / 1.4f).coerceIn(0f, 1f)
@@ -853,7 +779,6 @@ private fun DrawScope.drawCelebrationParticles(
         }
         if (fade <= 0.01f) return@forEach
 
-        // Air drag eases horizontal launch velocity slightly over time
         val drag = 1f / (1f + 0.38f * t)
         val flutter = sin(t * p.flutterFreq + p.initialRotationDeg) * p.flutterAmplitude
         val xFrac = p.originXFraction + p.velocityX * t * drag + flutter
@@ -878,11 +803,7 @@ private fun DrawScope.drawCelebrationParticles(
                     )
                 }
                 CelebrationParticleShape.CIRCLE -> {
-                    drawCircle(
-                        color = drawColor,
-                        radius = pxSize * 0.42f,
-                        center = Offset(x, y)
-                    )
+                    drawCircle(color = drawColor, radius = pxSize * 0.42f, center = Offset(x, y))
                 }
                 CelebrationParticleShape.STAR -> {
                     drawMiniStar(

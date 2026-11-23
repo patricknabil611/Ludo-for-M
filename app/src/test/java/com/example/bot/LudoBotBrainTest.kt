@@ -1,13 +1,14 @@
 package com.example.bot
 
 import com.example.engine.BotDifficulty
-import com.example.engine.ClassicRuleSet
 import com.example.engine.GameModeId
 import com.example.engine.LudoEngine
+import com.example.engine.MatchFormat
 import com.example.engine.PlayerColor
 import com.example.engine.PlayerControllerType
 import com.example.engine.PlayerSetup
 import com.example.engine.RollOutcome
+import com.example.engine.RuleSetRegistry
 import com.example.engine.Token
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -16,28 +17,29 @@ import kotlin.random.Random
 
 class LudoBotBrainTest {
 
-    private val engine = LudoEngine()
+    private val classicRules = RuleSetRegistry.forMode(GameModeId.CLASSIC, MatchFormat.ONE_VS_ONE)
+    private val engine = LudoEngine(classicRules)
     private val botBrain = LudoBotBrain(random = Random(123))
 
     @Test
-    fun `seat planner auto-fills empty seats with bots up to chosen player count`() {
+    fun `seat planner auto-fills empty seats with bots according to match format`() {
         val seats = listOf(
             SeatConfig(0, SeatOccupancy.HUMAN, "Maya", PlayerColor.RED),
-            SeatConfig(1, SeatOccupancy.EMPTY, "Empty 2", PlayerColor.YELLOW),
-            SeatConfig(2, SeatOccupancy.EMPTY, "Empty 3", PlayerColor.GREEN),
+            SeatConfig(1, SeatOccupancy.EMPTY, "Empty 2", PlayerColor.GREEN),
+            SeatConfig(2, SeatOccupancy.EMPTY, "Empty 3", PlayerColor.YELLOW),
             SeatConfig(3, SeatOccupancy.EMPTY, "Empty 4", PlayerColor.BLUE)
         )
 
-        val fourPlayer = MatchSeatPlanner.buildMatchSetups(seats, targetPlayerCount = 4)
+        val fourPlayer = MatchSeatPlanner.buildMatchSetups(seats, MatchFormat.FOUR_PLAYERS)
         assertEquals(4, fourPlayer.size)
         assertEquals(1, fourPlayer.count { it.controllerType == PlayerControllerType.HUMAN_LOCAL })
         assertEquals(3, fourPlayer.count { it.controllerType == PlayerControllerType.BOT })
 
-        val twoPlayer = MatchSeatPlanner.buildMatchSetups(seats, targetPlayerCount = 2)
-        assertEquals(2, twoPlayer.size)
-        assertEquals(PlayerColor.RED, twoPlayer[0].color)
-        assertEquals(PlayerColor.YELLOW, twoPlayer[1].color) // opposite corners
-        assertTrue(twoPlayer[1].isBot)
+        val oneVsOne = MatchSeatPlanner.buildMatchSetups(seats, MatchFormat.ONE_VS_ONE)
+        assertEquals(2, oneVsOne.size)
+        assertEquals(PlayerColor.RED, oneVsOne[0].color)
+        assertEquals(PlayerColor.YELLOW, oneVsOne[1].color) // opposite corners
+        assertTrue(oneVsOne[1].isBot)
     }
 
     @Test
@@ -56,16 +58,20 @@ class LudoBotBrainTest {
     }
 
     @Test
-    fun `easy bot always returns a valid legal move`() {
+    fun `easy bot always returns a valid legal move from stacked tray`() {
         val state = engine.createGame(
             listOf(
                 PlayerSetup(0, "Bot", PlayerColor.RED, PlayerControllerType.BOT, BotDifficulty.EASY),
                 PlayerSetup(1, "Opp", PlayerColor.YELLOW)
-            )
+            ),
+            mode = GameModeId.CLASSIC,
+            matchFormat = MatchFormat.ONE_VS_ONE
         )
-        val roll = engine.applyDiceRoll(state, 6) as RollOutcome.MultipleLegalMoves
-        val chosen = botBrain.chooseMove(roll.state, ClassicRuleSet, roll.moves, BotDifficulty.EASY)
-        assertTrue(chosen in roll.moves)
+        // Roll 6 (stacks), then roll 2 -> tray [6, 2], all 4 tokens can exit base with 6
+        val r1 = engine.applyDiceRoll(state, 6) as RollOutcome.RollAgainStacked
+        val r2 = engine.applyDiceRoll(r1.state, 2) as RollOutcome.MultipleLegalMoves
+        val chosen = botBrain.chooseMove(r2.state, classicRules, r2.moves, BotDifficulty.EASY)
+        assertTrue(chosen in r2.moves)
     }
 
     @Test
@@ -99,7 +105,7 @@ class LudoBotBrainTest {
             }
         )
         val roll = engine.applyDiceRoll(modified, 3) as RollOutcome.MultipleLegalMoves
-        val chosen = botBrain.chooseMove(roll.state, ClassicRuleSet, roll.moves, BotDifficulty.MEDIUM)
+        val chosen = botBrain.chooseMove(roll.state, classicRules, roll.moves, BotDifficulty.MEDIUM)
         assertEquals(0, chosen.tokenId)
         assertTrue(chosen.capturedTokens.isNotEmpty())
     }
@@ -137,31 +143,34 @@ class LudoBotBrainTest {
             }
         )
 
-        val riskBefore = botBrain.evaluateCaptureRisk(modified, PlayerColor.RED, 5, ClassicRuleSet)
-        val riskSafe = botBrain.evaluateCaptureRisk(modified, PlayerColor.RED, 8, ClassicRuleSet)
+        val riskBefore = botBrain.evaluateCaptureRisk(modified, PlayerColor.RED, 5, classicRules)
+        val riskSafe = botBrain.evaluateCaptureRisk(modified, PlayerColor.RED, 8, classicRules)
         assertTrue(riskBefore > 0.0)
         assertEquals(0.0, riskSafe, 0.0001)
 
         val roll = engine.applyDiceRoll(modified, 3) as RollOutcome.MultipleLegalMoves
-        val chosen = botBrain.chooseMove(roll.state, ClassicRuleSet, roll.moves, BotDifficulty.HARD)
+        val chosen = botBrain.chooseMove(roll.state, classicRules, roll.moves, BotDifficulty.HARD)
         assertEquals(0, chosen.tokenId)
         assertEquals(8, chosen.toProgress)
     }
 
     @Test
-    fun `hard bot respects mode-specific heuristics across future modes`() {
-        val base = engine.createGame(
+    fun `hard bot respects 2v2 team format and never captures partner`() {
+        val teamRules = RuleSetRegistry.forMode(GameModeId.CLASSIC, MatchFormat.TEAMS_2V2)
+        val teamEngine = LudoEngine(teamRules)
+        val base = teamEngine.createGame(
             listOf(
                 PlayerSetup(0, "HardBot", PlayerColor.RED, PlayerControllerType.BOT, BotDifficulty.HARD),
                 PlayerSetup(1, "Opp1", PlayerColor.GREEN),
                 PlayerSetup(2, "Partner", PlayerColor.YELLOW),
                 PlayerSetup(3, "Opp2", PlayerColor.BLUE)
             ),
-            mode = GameModeId.TEAMS_2V2
+            mode = GameModeId.CLASSIC,
+            matchFormat = MatchFormat.TEAMS_2V2
         )
-        // In TEAMS_2V2, YELLOW is RED's opposite-corner teammate!
-        // Red Token 0 at progress 24 -> roll 3 would capture Yellow on 27 (bad for team!)
-        // Red Token 1 at progress 10 -> roll 3 moves cleanly to 13 without hurting teammate
+        // In 2v2 Team, YELLOW is RED's opposite-corner teammate!
+        // Red Token 0 at progress 24 -> roll 3 lands on 27 alongside Yellow (no capture!)
+        // Red Token 1 at progress 10 -> roll 3 lands on 13 (safe square)
         val modified = base.copy(
             players = base.players.map { p ->
                 when (p.color) {
@@ -182,8 +191,9 @@ class LudoBotBrainTest {
                 }
             }
         )
-        val roll = engine.applyDiceRoll(modified, 3) as RollOutcome.MultipleLegalMoves
-        val chosen = botBrain.chooseMove(roll.state, ClassicRuleSet, roll.moves, BotDifficulty.HARD)
-        assertEquals(1, chosen.tokenId)
+        val roll = teamEngine.applyDiceRoll(modified, 3) as RollOutcome.MultipleLegalMoves
+        assertTrue("Partners must never capture each other", roll.moves.all { it.capturedTokens.isEmpty() })
+        val chosen = botBrain.chooseMove(roll.state, teamRules, roll.moves, BotDifficulty.HARD)
+        assertEquals(1, chosen.tokenId) // prefers safe square 13 over non-safe 27
     }
 }

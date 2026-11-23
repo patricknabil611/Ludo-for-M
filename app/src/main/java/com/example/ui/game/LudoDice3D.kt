@@ -10,6 +10,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -20,6 +21,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -33,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -41,17 +45,21 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.engine.PlayerColor
-import com.example.ui.theme.InkDark
-import com.example.ui.theme.SunnyGold
-import com.example.ui.theme.palette
+import com.example.ui.theme.LocalLudoTheme
+import com.example.ui.theme.LudoTheme
+import com.example.ui.theme.ThemeShadowSpec
+import com.example.ui.theme.ludoShadow
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlin.math.PI
@@ -66,7 +74,7 @@ import kotlin.random.Random
  * perspective-projected 6-face Ludo die.
  */
 object DiceCube3DEngine {
-    const val ROLL_DURATION_MS: Int = 540
+    const val ROLL_DURATION_MS: Int = 680
     const val CAMERA_DISTANCE: Float = 5.4f
     const val FOCAL_LENGTH: Float = 4.75f
     const val REST_VIEW_TILT_X_DEG: Float = -18f
@@ -84,7 +92,6 @@ object DiceCube3DEngine {
         val pips: List<Pair<Float, Float>>
     )
 
-    // Top-left-front directional light for clean 3D Lambertian face shading
     private val lightDir: Vec3 = run {
         val lx = -0.38f
         val ly = -0.62f
@@ -93,15 +100,8 @@ object DiceCube3DEngine {
         Vec3(lx / len, ly / len, lz / len)
     }
 
-    /**
-     * Generates a fair uniform random die roll between 1 and 6 inclusive.
-     */
     fun rollRandomFace(random: Random = Random.Default): Int = random.nextInt(1, 7)
 
-    /**
-     * Returns the exact cube-local (rotX, rotY) angles in degrees that bring [face] (1..6)
-     * directly forward onto +Z before applying the fixed 3/4 resting view tilt.
-     */
     fun targetAnglesForFace(face: Int): FaceTargetAngles = when (face.coerceIn(1, 6)) {
         1 -> FaceTargetAngles(rotX = 0f, rotY = 0f)
         2 -> FaceTargetAngles(rotX = -90f, rotY = 0f)
@@ -111,9 +111,6 @@ object DiceCube3DEngine {
         else -> FaceTargetAngles(rotX = 0f, rotY = 180f)
     }
 
-    /**
-     * Standard 6-face die layout where opposite faces sum to 7 (1-6, 2-5, 3-4).
-     */
     val faces: List<CubeFaceDef> = run {
         val p = 0.44f
         val pipsByValue = mapOf(
@@ -134,21 +131,20 @@ object DiceCube3DEngine {
         )
     }
 
-    // Pre-computed rounded-square UV contour (16 vertices) so draw loop stays allocation-light
     val outerFaceUv: List<Pair<Float, Float>> = buildRoundedSquareUv(halfExtent = 1.0f, cornerRadius = 0.24f)
     val innerFaceUv: List<Pair<Float, Float>> = buildRoundedSquareUv(halfExtent = 0.87f, cornerRadius = 0.19f)
-    val pipCircleUv: List<Pair<Float, Float>> = List(10) { i ->
-        val angle = (2.0 * PI * i) / 10.0
+    val pipCircleUv: List<Pair<Float, Float>> = List(16) { i ->
+        val angle = (2.0 * PI * i) / 16.0
         cos(angle).toFloat() to sin(angle).toFloat()
     }
 
     private fun buildRoundedSquareUv(halfExtent: Float, cornerRadius: Float): List<Pair<Float, Float>> {
         val inner = halfExtent - cornerRadius
         val corners = listOf(
-            Triple(inner, -inner, -90f to 0f),     // Top-right
-            Triple(inner, inner, 0f to 90f),       // Bottom-right
-            Triple(-inner, inner, 90f to 180f),    // Bottom-left
-            Triple(-inner, -inner, 180f to 270f)   // Top-left
+            Triple(inner, -inner, -90f to 0f),
+            Triple(inner, inner, 0f to 90f),
+            Triple(-inner, inner, 90f to 180f),
+            Triple(-inner, -inner, 180f to 270f)
         )
         val result = ArrayList<Pair<Float, Float>>(16)
         for ((cx, cy, range) in corners) {
@@ -163,9 +159,6 @@ object DiceCube3DEngine {
         return result
     }
 
-    /**
-     * Transforms a 3D point by cube-local Rx -> Ry -> Rz, then fixed world 3/4 view tilt.
-     */
     fun transformPoint(
         p: Vec3,
         rotXDeg: Float,
@@ -212,9 +205,6 @@ object DiceCube3DEngine {
         return Vec3(x5, y5, z5)
     }
 
-    /**
-     * Computes which face (1..6) is most facing the camera for the given cube rotation.
-     */
     fun frontFacingValue(rotXDeg: Float, rotYDeg: Float, rotZDeg: Float): Int {
         var bestFace = 1
         var bestZ = Float.NEGATIVE_INFINITY
@@ -243,7 +233,6 @@ object DiceCube3DEngine {
     }
 
     fun isFaceVisible(transformedNormal: Vec3): Boolean {
-        // Exact perspective backface culling for a unit cube centered at origin with camera at +Z
         return (CAMERA_DISTANCE * transformedNormal.z - 1f) > 0.015f
     }
 
@@ -265,15 +254,10 @@ object DiceCube3DEngine {
 private val DiceTumbleEasing = CubicBezierEasing(0.16f, 0.88f, 0.24f, 1.0f)
 
 /**
- * True 3D perspective-projected 6-face animated Ludo die.
- *
- * Supports two seamless modes:
- * 1. **Self-rolling mode** (`onRollResult != null`): Tapping the die generates a random
- *    number between 1 and 6, notifies `onRollStarted`, animates the 3D cube tumbling and
- *    bouncing onto that exact face, and invokes `onRollResult(rolledValue)` to update game state.
- * 2. **Controlled mode** (`onRollResult == null`): Driven externally via `value` and
- *    `rollTrigger` (used for Bots, synced Online rolls, and scripted Tutorial lessons),
- *    while still rendering the exact same 3D cube tumble onto `value`.
+ * Themed 3D animated Ludo die:
+ * - While tumbling: full perspective-projected 6-face 3D cube with bounce.
+ * - When settled flat: crisp 58dp rounded square (16dp corners), theme dieFace, 9dp pips in theme.pip,
+ *   and exact theme dieShadow.
  */
 @Composable
 fun LudoDice3D(
@@ -282,15 +266,19 @@ fun LudoDice3D(
     isRolling: Boolean,
     canRoll: Boolean,
     activeColor: PlayerColor,
+    isGoldenDice: Boolean = false,
+    showTapHint: Boolean = false,
     onRollClick: () -> Unit = {},
     onRollStarted: (() -> Unit)? = null,
     onRollResult: ((Int) -> Unit)? = null,
     random: Random = Random.Default,
     modifier: Modifier = Modifier,
-    size: Dp = 76.dp,
+    size: Dp = 58.dp,
     testTag: String = "dice_roll_button"
 ) {
-    val palette = activeColor.palette()
+    val theme = LocalLudoTheme.current
+    val playerColor = theme.playerColor(activeColor)
+    val playerDark = lerp(playerColor, Color.Black, 0.32f)
     val safeValue = value.coerceIn(1, 6)
     val initialAngles = remember { DiceCube3DEngine.targetAnglesForFace(safeValue) }
 
@@ -299,6 +287,7 @@ fun LudoDice3D(
     val rotZ = remember { Animatable(0f) }
     val jumpArc = remember { Animatable(0f) }
     val squashScale = remember { Animatable(1f) }
+    val tumbleTiltFactor = remember { Animatable(0f) }
     val sixRingProgress = remember { Animatable(0f) }
 
     var internalRolling by remember { mutableStateOf(false) }
@@ -322,7 +311,6 @@ fun LudoDice3D(
         val startY = rotY.value
         val startZ = rotZ.value
 
-        // Normalize angle deltas so we always do a lively ~2 full 3D spins and land cleanly on targetFace
         val endX = startX + 720f + normalizeSignedDelta(target.rotX - startX)
         val endY = startY + (yDir * 720f) + normalizeSignedDelta(target.rotY - startY)
         val endZ = startZ + (zDir * 360f) + normalizeSignedDelta(0f - startZ)
@@ -358,23 +346,28 @@ fun LudoDice3D(
                 )
             }
             launch {
-                // Main toss arc + crisp landing mini-hop
-                jumpArc.animateTo(1f, tween(210, easing = FastOutSlowInEasing))
-                jumpArc.animateTo(0f, tween(175, easing = CubicBezierEasing(0.45f, 0f, 0.85f, 0.65f)))
-                jumpArc.animateTo(0.24f, tween(80, easing = FastOutSlowInEasing))
-                jumpArc.animateTo(0f, tween(75, easing = FastOutSlowInEasing))
+                tumbleTiltFactor.animateTo(1f, tween(160, easing = FastOutSlowInEasing))
+                tumbleTiltFactor.animateTo(0.85f, tween(280))
+                tumbleTiltFactor.animateTo(0f, tween(240, easing = FastOutSlowInEasing))
             }
             launch {
-                squashScale.animateTo(1.10f, tween(200))
-                squashScale.animateTo(0.92f, tween(170))
-                squashScale.animateTo(1.0f, spring(dampingRatio = 0.45f, stiffness = 460f))
+                jumpArc.animateTo(1f, tween(240, easing = FastOutSlowInEasing))
+                jumpArc.animateTo(0f, tween(210, easing = CubicBezierEasing(0.45f, 0f, 0.85f, 0.65f)))
+                jumpArc.animateTo(0.28f, tween(115, easing = FastOutSlowInEasing))
+                jumpArc.animateTo(0f, tween(115, easing = FastOutSlowInEasing))
+            }
+            launch {
+                squashScale.animateTo(1.12f, tween(230))
+                squashScale.animateTo(0.90f, tween(200))
+                squashScale.animateTo(1.04f, tween(110))
+                squashScale.animateTo(1.0f, spring(dampingRatio = 0.52f, stiffness = 480f))
             }
         }
 
-        // Snap modulo 360 cleanly at exact resting angles without visual jump
         rotX.snapTo(target.rotX)
         rotY.snapTo(target.rotY)
         rotZ.snapTo(0f)
+        tumbleTiltFactor.snapTo(0f)
         shownFaceValue = cleanFace
 
         if (cleanFace == 6) {
@@ -383,7 +376,6 @@ fun LudoDice3D(
         }
     }
 
-    // Controlled / external roll trigger (bots, online synced rolls, tutorial lessons)
     LaunchedEffect(rollTrigger) {
         if (rollTrigger > lastExternalTrigger) {
             lastExternalTrigger = rollTrigger
@@ -393,25 +385,25 @@ fun LudoDice3D(
         }
     }
 
-    // Keep resting cube orientation synced when value changes while idle (e.g., resuming a saved match)
     LaunchedEffect(safeValue, isRolling, internalRolling) {
         if (!isRolling && !internalRolling && rollTrigger == lastExternalTrigger && shownFaceValue != safeValue) {
             val target = DiceCube3DEngine.targetAnglesForFace(safeValue)
             rotX.snapTo(target.rotX)
             rotY.snapTo(target.rotY)
             rotZ.snapTo(0f)
+            tumbleTiltFactor.snapTo(0f)
             shownFaceValue = safeValue
         }
     }
 
     val effectiveRolling = isRolling || internalRolling
+    val show3DCube = effectiveRolling || tumbleTiltFactor.value > 0.02f || jumpArc.value > 0.02f
 
-    // Only run idle breathing animation when the die is actively ready to roll (saves battery on mid-range phones)
-    val idlePulse = if (canRoll && !effectiveRolling) {
+    val idlePulse = if ((canRoll || isGoldenDice) && !effectiveRolling) {
         val pulseTransition = rememberInfiniteTransition(label = "diceReadyPulse")
         val anim by pulseTransition.animateFloat(
             initialValue = 1f,
-            targetValue = 1.07f,
+            targetValue = 1.06f,
             animationSpec = infiniteRepeatable(
                 animation = tween(720),
                 repeatMode = RepeatMode.Reverse
@@ -428,13 +420,32 @@ fun LudoDice3D(
     val reusableInnerPath = remember { Path() }
     val reusablePipPath = remember { Path() }
 
+    val activeDieShadow = remember(theme, isGoldenDice, playerColor) {
+        when {
+            isGoldenDice -> ThemeShadowSpec.Glow(
+                blur = 20.dp,
+                color = theme.yellow.copy(alpha = 0.65f),
+                outlineColor = theme.yellow,
+                outlineWidth = 1.5.dp
+            )
+            else -> theme.dieShadow
+        }
+    }
+
+    val restingFaceColor = if (isGoldenDice) {
+        lerp(theme.dieFace, theme.yellow, 0.24f)
+    } else {
+        theme.dieFace
+    }
+
     Box(
         modifier = modifier
             .size(size)
             .testTag(testTag)
             .semantics {
                 contentDescription = if (canRoll) {
-                    "3D Dice showing $shownFaceValue. Tap to roll"
+                    if (isGoldenDice) "Golden Dice ready. Tap to roll guaranteed 6"
+                    else "3D Dice showing $shownFaceValue. Tap to roll"
                 } else {
                     "3D Dice showing $shownFaceValue"
                 }
@@ -444,8 +455,8 @@ fun LudoDice3D(
                 interactionSource = interactionSource,
                 indication = ripple(
                     bounded = false,
-                    radius = size * 0.54f,
-                    color = palette.primary.copy(alpha = 0.30f)
+                    radius = size * 0.56f,
+                    color = (if (isGoldenDice) theme.yellow else playerColor).copy(alpha = 0.32f)
                 ),
                 role = Role.Button,
                 onClick = {
@@ -453,7 +464,7 @@ fun LudoDice3D(
                     if (resultCallback != null) {
                         if (internalRolling) return@clickable
                         internalRolling = true
-                        val rolledValue = DiceCube3DEngine.rollRandomFace(random)
+                        val rolledValue = if (isGoldenDice) 6 else DiceCube3DEngine.rollRandomFace(random)
                         latestOnRollStarted?.invoke()
                         coroutineScope.launch {
                             try {
@@ -470,31 +481,77 @@ fun LudoDice3D(
             ),
         contentAlignment = Alignment.Center
     ) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            draw3DCubeDie(
-                rotXDeg = rotX.value,
-                rotYDeg = rotY.value,
-                rotZDeg = rotZ.value,
-                jumpFactor = jumpArc.value,
-                scaleFactor = squashScale.value * idlePulse,
-                sixRingProgress = sixRingProgress.value,
-                canRoll = canRoll && !effectiveRolling,
-                primaryColor = palette.primary,
-                darkColor = palette.dark,
-                outerPath = reusableOuterPath,
-                innerPath = reusableInnerPath,
-                pipPath = reusablePipPath
-            )
+        if (show3DCube) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                draw3DCubeDie(
+                    rotXDeg = rotX.value,
+                    rotYDeg = rotY.value,
+                    rotZDeg = rotZ.value,
+                    viewTiltXDeg = DiceCube3DEngine.REST_VIEW_TILT_X_DEG * tumbleTiltFactor.value,
+                    viewTiltYDeg = DiceCube3DEngine.REST_VIEW_TILT_Y_DEG * tumbleTiltFactor.value,
+                    jumpFactor = jumpArc.value,
+                    scaleFactor = squashScale.value * idlePulse,
+                    sixRingProgress = sixRingProgress.value,
+                    canRoll = canRoll && !effectiveRolling,
+                    isGoldenDice = isGoldenDice,
+                    theme = theme,
+                    primaryColor = playerColor,
+                    darkColor = playerDark,
+                    outerPath = reusableOuterPath,
+                    innerPath = reusableInnerPath,
+                    pipPath = reusablePipPath
+                )
+            }
+        } else {
+            // Flat resting die matching exact Part 5 spec (58dp, 16dp corners, dieFace, 9dp pips, dieShadow)
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = idlePulse * squashScale.value
+                        scaleY = idlePulse * squashScale.value
+                    }
+                    .ludoShadow(activeDieShadow, 16.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(restingFaceColor)
+            ) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    drawFlatRestingPips(
+                        value = shownFaceValue,
+                        pipColor = if (isGoldenDice) theme.contrastingTextOn(restingFaceColor) else theme.pip,
+                        sixRingProgress = sixRingProgress.value,
+                        sixRingColor = theme.yellow
+                    )
+                }
+            }
+        }
+
+        if (showTapHint && canRoll && !effectiveRolling) {
+            val hintBg = if (isGoldenDice) theme.yellow else theme.primaryActionBg
+            val hintFg = if (isGoldenDice) theme.contrastingTextOn(theme.yellow) else theme.onPrimaryAction
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 1.dp)
+                    .testTag("dice_tap_hint"),
+                shape = RoundedCornerShape(999.dp),
+                color = hintBg
+            ) {
+                Text(
+                    text = if (isGoldenDice) "6!" else "Tap",
+                    fontFamily = theme.font,
+                    fontSize = 10.sp,
+                    color = hintFg,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
+                )
+            }
         }
     }
 }
 
 /**
- * Synchronized pair of 3D animated dice used as the default dice control across all game modes.
- *
- * - During `AWAITING_ROLL`: tapping either die tumbles both cubes in 3D and emits `(die1, die2)`.
- * - During `AWAITING_MOVE`: shows which die is spent (dimmed) vs active/selected (ringed), and
- *   tapping an unspent playable die lets the player pick that die's number of steps!
+ * Synchronized pair of 3D animated dice (retained for any multi-die callers).
  */
 @Composable
 fun LudoDoubleDice3D(
@@ -517,6 +574,8 @@ fun LudoDoubleDice3D(
     dieSize: Dp = 56.dp,
     modifier: Modifier = Modifier
 ) {
+    val theme = LocalLudoTheme.current
+    val playerColor = theme.playerColor(activeColor)
     var localTrigger by remember { mutableIntStateOf(0) }
     var localFirst by remember { mutableIntStateOf(firstValue.coerceIn(1, 6)) }
     var localSecond by remember { mutableIntStateOf(secondValue.coerceIn(1, 6)) }
@@ -526,7 +585,6 @@ fun LudoDoubleDice3D(
     val latestOnStarted by rememberUpdatedState(onRollStarted)
     val latestOnResult by rememberUpdatedState(onDoubleRollResult)
     val latestOnClick by rememberUpdatedState(onRollClick)
-    val palette = activeColor.palette()
 
     val triggerDoubleRoll: () -> Unit = {
         val resultCallback = latestOnResult
@@ -554,7 +612,6 @@ fun LudoDoubleDice3D(
     val shownFirst = if (localRolling) localFirst else firstValue.coerceIn(1, 6)
     val shownSecond = if (localRolling) localSecond else secondValue.coerceIn(1, 6)
 
-    // Determine remaining/spent status for Die 0 and Die 1 (handles doubles like [6, 6] accurately)
     val die0Effective = rolledDice.getOrNull(0) ?: shownFirst
     val die1Effective = rolledDice.getOrNull(1) ?: shownSecond
     val (die0Remaining, die1Remaining) = if (rolledDice.size >= 2) {
@@ -583,7 +640,7 @@ fun LudoDoubleDice3D(
             modifier = Modifier
                 .then(
                     if (die0Selected) {
-                        Modifier.border(2.5.dp, palette.primary, RoundedCornerShape(16.dp))
+                        Modifier.border(2.5.dp, playerColor, RoundedCornerShape(16.dp))
                     } else Modifier
                 )
                 .padding(2.dp)
@@ -609,7 +666,7 @@ fun LudoDoubleDice3D(
             modifier = Modifier
                 .then(
                     if (die1Selected) {
-                        Modifier.border(2.5.dp, palette.primary, RoundedCornerShape(16.dp))
+                        Modifier.border(2.5.dp, playerColor, RoundedCornerShape(16.dp))
                     } else Modifier
                 )
                 .padding(2.dp)
@@ -641,14 +698,72 @@ private fun normalizeSignedDelta(degDelta: Float): Float {
     return d
 }
 
+private fun DrawScope.drawFlatRestingPips(
+    value: Int,
+    pipColor: Color,
+    sixRingProgress: Float,
+    sixRingColor: Color
+) {
+    val w = size.width
+    val h = size.height
+    val minDim = minOf(w, h)
+    // 9dp pips on a 58dp die (scales proportionally with die size)
+    val pipRadius = (9.dp.toPx() / 2f).coerceAtMost(minDim * 0.088f)
+    val left = w * 0.27f
+    val mid = w * 0.50f
+    val right = w * 0.73f
+    val top = h * 0.27f
+    val center = h * 0.50f
+    val bottom = h * 0.73f
+
+    val pips = when (value.coerceIn(1, 6)) {
+        1 -> listOf(Offset(mid, center))
+        2 -> listOf(Offset(left, top), Offset(right, bottom))
+        3 -> listOf(Offset(left, top), Offset(mid, center), Offset(right, bottom))
+        4 -> listOf(Offset(left, top), Offset(right, top), Offset(left, bottom), Offset(right, bottom))
+        5 -> listOf(
+            Offset(left, top), Offset(right, top),
+            Offset(mid, center),
+            Offset(left, bottom), Offset(right, bottom)
+        )
+        else -> listOf(
+            Offset(left, top), Offset(right, top),
+            Offset(left, center), Offset(right, center),
+            Offset(left, bottom), Offset(right, bottom)
+        )
+    }
+
+    for (pos in pips) {
+        drawCircle(
+            color = pipColor,
+            radius = pipRadius,
+            center = pos
+        )
+    }
+
+    if (sixRingProgress > 0.01f && sixRingProgress < 0.99f) {
+        val ringRadius = minDim * (0.30f + 0.20f * sixRingProgress)
+        drawCircle(
+            color = sixRingColor.copy(alpha = (1f - sixRingProgress) * 0.85f),
+            radius = ringRadius,
+            center = Offset(w * 0.5f, h * 0.5f),
+            style = Stroke(width = (1f - sixRingProgress) * minDim * 0.07f)
+        )
+    }
+}
+
 private fun DrawScope.draw3DCubeDie(
     rotXDeg: Float,
     rotYDeg: Float,
     rotZDeg: Float,
+    viewTiltXDeg: Float,
+    viewTiltYDeg: Float,
     jumpFactor: Float,
     scaleFactor: Float,
     sixRingProgress: Float,
     canRoll: Boolean,
+    isGoldenDice: Boolean,
+    theme: LudoTheme,
     primaryColor: Color,
     darkColor: Color,
     outerPath: Path,
@@ -659,16 +774,29 @@ private fun DrawScope.draw3DCubeDie(
     val h = size.height
     val minDim = minOf(w, h)
     val centerX = w * 0.5f
-    val baseCenterY = h * 0.51f
-    val liftPx = jumpFactor * (minDim * 0.12f)
+    val baseCenterY = h * 0.48f
+    val liftPx = jumpFactor * (minDim * 0.14f)
     val centerY = baseCenterY - liftPx
 
-    // Subtle glowing readiness halo when ready to roll
-    if (canRoll) {
+    if (isGoldenDice) {
         drawCircle(
             brush = Brush.radialGradient(
                 colors = listOf(
-                    primaryColor.copy(alpha = 0.24f),
+                    theme.yellow.copy(alpha = 0.52f),
+                    theme.yellow.copy(alpha = 0.18f),
+                    theme.yellow.copy(alpha = 0f)
+                ),
+                center = Offset(centerX, baseCenterY),
+                radius = minDim * 0.54f
+            ),
+            radius = minDim * 0.54f,
+            center = Offset(centerX, baseCenterY)
+        )
+    } else if (canRoll) {
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(
+                    primaryColor.copy(alpha = 0.28f),
                     primaryColor.copy(alpha = 0f)
                 ),
                 center = Offset(centerX, baseCenterY),
@@ -679,37 +807,36 @@ private fun DrawScope.draw3DCubeDie(
         )
     }
 
-    // Celebratory golden burst ring when landing on a 6
     if (sixRingProgress > 0.01f && sixRingProgress < 0.99f) {
         val ringRadius = minDim * (0.34f + 0.19f * sixRingProgress)
         drawCircle(
-            color = SunnyGold.copy(alpha = (1f - sixRingProgress) * 0.85f),
+            color = theme.yellow.copy(alpha = (1f - sixRingProgress) * 0.85f),
             radius = ringRadius,
             center = Offset(centerX, baseCenterY),
             style = Stroke(width = (1f - sixRingProgress) * minDim * 0.07f)
         )
     }
 
-    // Dynamic elliptical floor shadow that shrinks & softens as the die leaps upward
-    val shadowWidth = minDim * (0.62f - jumpFactor * 0.18f)
-    val shadowHeight = minDim * (0.16f - jumpFactor * 0.05f)
-    val shadowAlpha = (0.28f - jumpFactor * 0.13f).coerceAtLeast(0.08f)
+    val shadowWidth = minDim * (0.60f - jumpFactor * 0.18f)
+    val shadowHeight = minDim * (0.14f - jumpFactor * 0.04f)
+    val shadowAlpha = (0.24f - jumpFactor * 0.11f).coerceAtLeast(0.06f)
     drawOval(
-        color = darkColor.copy(alpha = shadowAlpha),
-        topLeft = Offset(centerX - shadowWidth * 0.5f, h * 0.80f),
+        color = Color.Black.copy(alpha = shadowAlpha),
+        topLeft = Offset(centerX - shadowWidth * 0.5f, h * 0.78f),
         size = Size(shadowWidth, shadowHeight)
     )
 
-    val cubeHalfPx = minDim * 0.265f * scaleFactor
+    val cubeHalfPx = minDim * 0.30f * scaleFactor
 
-    // Transform all 6 face normals, cull backfaces, and painter-sort back-to-front
     val visibleFaces = ArrayList<Pair<DiceCube3DEngine.CubeFaceDef, DiceCube3DEngine.Vec3>>(4)
     for (face in DiceCube3DEngine.faces) {
         val transformedNormal = DiceCube3DEngine.transformPoint(
             p = face.normal,
             rotXDeg = rotXDeg,
             rotYDeg = rotYDeg,
-            rotZDeg = rotZDeg
+            rotZDeg = rotZDeg,
+            viewTiltXDeg = viewTiltXDeg,
+            viewTiltYDeg = viewTiltYDeg
         )
         if (DiceCube3DEngine.isFaceVisible(transformedNormal)) {
             visibleFaces.add(face to transformedNormal)
@@ -717,24 +844,34 @@ private fun DrawScope.draw3DCubeDie(
     }
     visibleFaces.sortBy { it.second.z }
 
-    val rimTintBase = lerp(Color(0xFFEAEEF8), primaryColor, if (canRoll) 0.24f else 0.14f)
-    val edgeStrokeColor = if (canRoll) primaryColor.copy(alpha = 0.88f) else darkColor.copy(alpha = 0.42f)
-    val edgeStrokeWidth = (minDim * 0.024f).coerceAtLeast(1.4f)
+    val rimTintBase = when {
+        isGoldenDice -> lerp(theme.dieFace, theme.yellow, 0.38f)
+        else -> lerp(theme.dieFace, theme.chipLine, 0.45f)
+    }
+    val edgeStrokeColor = when {
+        isGoldenDice -> lerp(theme.yellow, Color.Black, 0.30f)
+        else -> theme.chipLine
+    }
+    val edgeStrokeWidth = (minDim * 0.026f).coerceAtLeast(1.4f)
+    val faceBaseColor = if (isGoldenDice) {
+        lerp(theme.dieFace, theme.yellow, 0.20f)
+    } else {
+        theme.dieFace
+    }
 
     for ((face, transformedNormal) in visibleFaces) {
         val light = DiceCube3DEngine.lightIntensity(transformedNormal)
 
-        // Outer beveled face polygon
         outerPath.reset()
         DiceCube3DEngine.outerFaceUv.forEachIndexed { idx, (u, v) ->
             val p3 = DiceCube3DEngine.pointOnFace(face, u, v)
-            val rot = DiceCube3DEngine.transformPoint(p3, rotXDeg, rotYDeg, rotZDeg)
+            val rot = DiceCube3DEngine.transformPoint(p3, rotXDeg, rotYDeg, rotZDeg, viewTiltXDeg, viewTiltYDeg)
             val pt = DiceCube3DEngine.project(rot, centerX, centerY, cubeHalfPx)
             if (idx == 0) outerPath.moveTo(pt.x, pt.y) else outerPath.lineTo(pt.x, pt.y)
         }
         outerPath.close()
 
-        val outerShade = shadeColor(rimTintBase, light * 0.94f)
+        val outerShade = shadeColor(rimTintBase, light * 0.96f)
         drawPath(path = outerPath, color = outerShade)
         drawPath(
             path = outerPath,
@@ -742,41 +879,27 @@ private fun DrawScope.draw3DCubeDie(
             style = Stroke(width = edgeStrokeWidth, join = StrokeJoin.Round)
         )
 
-        // Inner glossy ivory face inset
         innerPath.reset()
         DiceCube3DEngine.innerFaceUv.forEachIndexed { idx, (u, v) ->
             val p3 = DiceCube3DEngine.pointOnFace(face, u, v)
-            val rot = DiceCube3DEngine.transformPoint(p3, rotXDeg, rotYDeg, rotZDeg)
+            val rot = DiceCube3DEngine.transformPoint(p3, rotXDeg, rotYDeg, rotZDeg, viewTiltXDeg, viewTiltYDeg)
             val pt = DiceCube3DEngine.project(rot, centerX, centerY, cubeHalfPx)
             if (idx == 0) innerPath.moveTo(pt.x, pt.y) else innerPath.lineTo(pt.x, pt.y)
         }
         innerPath.close()
 
-        val faceColor = shadeColor(Color(0xFFFFFFFF), light)
+        val faceColor = shadeColor(faceBaseColor, (0.88f + 0.12f * light).coerceAtMost(1f))
         drawPath(path = innerPath, color = faceColor)
 
-        // Perspective-projected 3D recessed pips on this face
-        val basePipColor = if (face.value == 6 || face.value == 1) primaryColor else InkDark
-        val shadedPipColor = shadeColor(basePipColor, (0.72f + 0.28f * light).coerceAtMost(1f))
-        val pipRadiusUv = if (face.value == 1) 0.19f else 0.145f
+        val basePipColor = if (isGoldenDice) {
+            theme.contrastingTextOn(faceBaseColor)
+        } else {
+            theme.pip
+        }
+        val shadedPipColor = shadeColor(basePipColor, (0.82f + 0.18f * light).coerceAtMost(1f))
+        val pipRadiusUv = 0.155f
 
         for ((pu, pv) in face.pips) {
-            // Subtle bottom highlight for recessed dimple look
-            pipPath.reset()
-            DiceCube3DEngine.pipCircleUv.forEachIndexed { idx, (cu, cv) ->
-                val p3 = DiceCube3DEngine.pointOnFace(
-                    face,
-                    u = pu + cu * pipRadiusUv,
-                    v = pv + cv * pipRadiusUv + 0.025f
-                )
-                val rot = DiceCube3DEngine.transformPoint(p3, rotXDeg, rotYDeg, rotZDeg)
-                val pt = DiceCube3DEngine.project(rot, centerX, centerY, cubeHalfPx)
-                if (idx == 0) pipPath.moveTo(pt.x, pt.y) else pipPath.lineTo(pt.x, pt.y)
-            }
-            pipPath.close()
-            drawPath(path = pipPath, color = Color.White.copy(alpha = 0.55f * light))
-
-            // Main pip ellipse projected onto the 3D face plane
             pipPath.reset()
             DiceCube3DEngine.pipCircleUv.forEachIndexed { idx, (cu, cv) ->
                 val p3 = DiceCube3DEngine.pointOnFace(
@@ -784,7 +907,7 @@ private fun DrawScope.draw3DCubeDie(
                     u = pu + cu * pipRadiusUv,
                     v = pv + cv * pipRadiusUv
                 )
-                val rot = DiceCube3DEngine.transformPoint(p3, rotXDeg, rotYDeg, rotZDeg)
+                val rot = DiceCube3DEngine.transformPoint(p3, rotXDeg, rotYDeg, rotZDeg, viewTiltXDeg, viewTiltYDeg)
                 val pt = DiceCube3DEngine.project(rot, centerX, centerY, cubeHalfPx)
                 if (idx == 0) pipPath.moveTo(pt.x, pt.y) else pipPath.lineTo(pt.x, pt.y)
             }

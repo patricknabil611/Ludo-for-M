@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,18 +25,22 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
+import androidx.compose.material3.TabRowDefaults
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -43,22 +48,16 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.data.PlayerAvatarCodec
+import com.example.engine.GameModeId
 import com.example.online.RankedLeaderboardRow
 import com.example.ui.components.CartoonCard
 import com.example.ui.components.CartoonIconButton
 import com.example.ui.components.PlayerAvatarBadge
 import com.example.ui.online.LeaderboardTab
 import com.example.ui.online.LeaderboardUiState
-import com.example.ui.theme.CobaltPrimary
-import com.example.ui.theme.CoralPink
-import com.example.ui.theme.CreamBackground
-import com.example.ui.theme.InkDark
-import com.example.ui.theme.InkMuted
-import com.example.ui.theme.MintGreenDark
-import com.example.ui.theme.OutlineSoft
-import com.example.ui.theme.SkyTopTint
-import com.example.ui.theme.SunnyGold
-import com.example.ui.theme.SunnyGoldDark
+import com.example.ui.theme.AvatarArtPalette
+import com.example.ui.theme.LocalLudoTheme
+import com.example.ui.theme.ludoShadow
 
 /**
  * Global Leaderboard (Google accounts only):
@@ -72,12 +71,19 @@ fun LeaderboardScreen(
     uiState: LeaderboardUiState,
     myUid: String,
     onSelectTab: (LeaderboardTab) -> Unit,
-    onBackClick: () -> Unit
+    onBackClick: () -> Unit,
+    selectedMode: GameModeId? = null,
+    onSelectModeFilter: (GameModeId?) -> Unit = {}
 ) {
+    val theme = LocalLudoTheme.current
+    val selectedTabIndex = if (selectedTab == LeaderboardTab.ALL_TIME) 0 else 1
+    val tabAccent = theme.accessibleAccentOn(theme.blue, theme.surface)
+    val errorTextColor = theme.accessibleAccentOn(theme.red, theme.surface)
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(SkyTopTint, CreamBackground)))
+            .background(theme.bg)
             .safeDrawingPadding()
             .testTag("leaderboard_screen"),
         contentAlignment = Alignment.TopCenter
@@ -104,18 +110,18 @@ fun LeaderboardScreen(
                     Text(
                         text = stringResource(R.string.leaderboard_title),
                         style = MaterialTheme.typography.headlineMedium,
-                        color = InkDark
+                        color = theme.text
                     )
                     Text(
                         text = stringResource(R.string.leaderboard_subtitle),
                         style = MaterialTheme.typography.labelMedium,
-                        color = InkMuted
+                        color = theme.mutedText
                     )
                 }
                 Icon(
                     imageVector = Icons.Filled.EmojiEvents,
                     contentDescription = null,
-                    tint = SunnyGoldDark,
+                    tint = theme.crownIcon,
                     modifier = Modifier.size(32.dp)
                 )
             }
@@ -124,18 +130,30 @@ fun LeaderboardScreen(
 
             // All-Time / This Week Tabs
             Surface(
+                modifier = Modifier.ludoShadow(theme.cardShadow, 18.dp),
                 shape = RoundedCornerShape(18.dp),
-                color = Color.White,
-                border = BorderStroke(2.dp, OutlineSoft)
+                color = theme.surface,
+                border = BorderStroke(1.dp, theme.chipLine)
             ) {
                 TabRow(
-                    selectedTabIndex = if (selectedTab == LeaderboardTab.ALL_TIME) 0 else 1,
+                    selectedTabIndex = selectedTabIndex,
                     containerColor = Color.Transparent,
-                    contentColor = CobaltPrimary
+                    contentColor = tabAccent,
+                    indicator = { tabPositions ->
+                        if (selectedTabIndex < tabPositions.size) {
+                            TabRowDefaults.SecondaryIndicator(
+                                modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTabIndex]),
+                                color = tabAccent
+                            )
+                        }
+                    },
+                    divider = {}
                 ) {
                     Tab(
                         selected = selectedTab == LeaderboardTab.ALL_TIME,
                         onClick = { onSelectTab(LeaderboardTab.ALL_TIME) },
+                        selectedContentColor = tabAccent,
+                        unselectedContentColor = theme.surfaceMutedText,
                         modifier = Modifier.testTag("leaderboard_tab_all_time"),
                         text = {
                             Text(
@@ -147,6 +165,8 @@ fun LeaderboardScreen(
                     Tab(
                         selected = selectedTab == LeaderboardTab.THIS_WEEK,
                         onClick = { onSelectTab(LeaderboardTab.THIS_WEEK) },
+                        selectedContentColor = tabAccent,
+                        unselectedContentColor = theme.surfaceMutedText,
                         modifier = Modifier.testTag("leaderboard_tab_this_week"),
                         text = {
                             Text(
@@ -158,14 +178,73 @@ fun LeaderboardScreen(
                 }
             }
 
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(10.dp))
+
+            // Per-mode wins filter chips
+            LazyRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                item {
+                    FilterChip(
+                        selected = selectedMode == null,
+                        onClick = { onSelectModeFilter(null) },
+                        label = {
+                            Text(
+                                text = "All Modes",
+                                fontWeight = FontWeight.Bold
+                            )
+                        },
+                        colors = FilterChipDefaults.filterChipColors(
+                            containerColor = theme.surface,
+                            labelColor = theme.surfaceText,
+                            selectedContainerColor = theme.primaryActionBg,
+                            selectedLabelColor = theme.onPrimaryAction
+                        ),
+                        border = FilterChipDefaults.filterChipBorder(
+                            enabled = true,
+                            selected = selectedMode == null,
+                            borderColor = theme.chipLine,
+                            selectedBorderColor = theme.primaryActionBg
+                        ),
+                        modifier = Modifier.testTag("leaderboard_mode_all")
+                    )
+                }
+                items(GameModeId.entries, key = { it.name }) { mode ->
+                    FilterChip(
+                        selected = selectedMode == mode,
+                        onClick = { onSelectModeFilter(mode) },
+                        label = {
+                            Text(
+                                text = mode.title,
+                                fontWeight = FontWeight.Bold
+                            )
+                        },
+                        colors = FilterChipDefaults.filterChipColors(
+                            containerColor = theme.surface,
+                            labelColor = theme.surfaceText,
+                            selectedContainerColor = theme.primaryActionBg,
+                            selectedLabelColor = theme.onPrimaryAction
+                        ),
+                        border = FilterChipDefaults.filterChipBorder(
+                            enabled = true,
+                            selected = selectedMode == mode,
+                            borderColor = theme.chipLine,
+                            selectedBorderColor = theme.primaryActionBg
+                        ),
+                        modifier = Modifier.testTag("leaderboard_mode_${mode.name.lowercase()}")
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(10.dp))
 
             // Body
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 when (uiState) {
                     LeaderboardUiState.Loading -> {
                         CircularProgressIndicator(
-                            color = CobaltPrimary,
+                            color = theme.blue,
                             modifier = Modifier.align(Alignment.Center)
                         )
                     }
@@ -175,12 +254,12 @@ fun LeaderboardScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .align(Alignment.Center),
-                            borderColor = CoralPink
+                            borderColor = theme.red
                         ) {
                             Text(
                                 text = uiState.message,
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = CoralPink
+                                color = errorTextColor
                             )
                         }
                     }
@@ -191,13 +270,12 @@ fun LeaderboardScreen(
                             CartoonCard(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .align(Alignment.Center),
-                                borderColor = OutlineSoft
+                                    .align(Alignment.Center)
                             ) {
                                 Text(
                                     text = "No ranked matches yet for this period. Play an online match to claim #1!",
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = InkMuted
+                                    color = theme.surfaceMutedText
                                 )
                             }
                         } else {
@@ -225,11 +303,11 @@ fun LeaderboardScreen(
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .ludoShadow(theme.cardShadow, 20.dp)
                         .testTag("leaderboard_my_rank_footer"),
                     shape = RoundedCornerShape(20.dp),
-                    color = CobaltPrimary,
-                    border = BorderStroke(2.dp, Color.White),
-                    shadowElevation = 6.dp
+                    color = theme.primaryActionBg,
+                    border = BorderStroke(1.5.dp, theme.surface.copy(alpha = 0.45f))
                 ) {
                     if (myRow != null) {
                         Row(
@@ -246,12 +324,12 @@ fun LeaderboardScreen(
                             ) {
                                 Surface(
                                     shape = CircleShape,
-                                    color = SunnyGold
+                                    color = theme.yellow
                                 ) {
                                     Text(
                                         text = "#${myRow.rank}",
                                         style = MaterialTheme.typography.labelLarge,
-                                        color = Color(0xFF2C1E00),
+                                        color = theme.contrastingTextOn(theme.yellow),
                                         fontWeight = FontWeight.ExtraBold,
                                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                                     )
@@ -268,14 +346,14 @@ fun LeaderboardScreen(
                                     Text(
                                         text = "Your Rank • ${myRow.entry.nickname}",
                                         style = MaterialTheme.typography.titleMedium,
-                                        color = Color.White,
+                                        color = theme.onPrimaryAction,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
                                         text = "${myRow.wins}W • ${myRow.gamesPlayed}G • ${myRow.winRatePercent}% Win Rate",
                                         style = MaterialTheme.typography.labelMedium,
-                                        color = Color.White.copy(alpha = 0.88f)
+                                        color = theme.onPrimaryAction.copy(alpha = 0.88f)
                                     )
                                 }
                             }
@@ -284,7 +362,7 @@ fun LeaderboardScreen(
                         Text(
                             text = "Your Rank: Unranked — Play an online match to get ranked!",
                             style = MaterialTheme.typography.labelLarge,
-                            color = Color.White,
+                            color = theme.onPrimaryAction,
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
                         )
                     }
@@ -299,21 +377,31 @@ private fun LeaderboardRowCard(
     row: RankedLeaderboardRow,
     isCurrentUser: Boolean
 ) {
+    val theme = LocalLudoTheme.current
     val badgeBg = when (row.rank) {
-        1 -> SunnyGold
-        2 -> Color(0xFFC5CFE0)
-        3 -> Color(0xFFE09F67)
-        else -> OutlineSoft
+        1 -> AvatarArtPalette.medalGold
+        2 -> AvatarArtPalette.medalSilver
+        3 -> AvatarArtPalette.medalBronze
+        else -> theme.surfaceVariant
     }
-    val badgeTextColor = if (row.rank <= 3) Color(0xFF2C1E00) else InkDark
+    val badgeTextColor = theme.contrastingTextOn(badgeBg)
+    val rowBg = if (isCurrentUser) {
+        lerp(theme.surface, theme.blue, if (theme.isDarkSurface) 0.20f else 0.10f)
+    } else {
+        theme.surface
+    }
+    val winsColor = theme.accessibleAccentOn(theme.blue, rowBg)
+    val wrColor = theme.accessibleAccentOn(theme.green, rowBg)
 
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .ludoShadow(theme.cardShadow, 18.dp),
         shape = RoundedCornerShape(18.dp),
-        color = if (isCurrentUser) Color(0xFFEBF3FF) else Color.White,
+        color = rowBg,
         border = BorderStroke(
-            width = if (isCurrentUser) 2.dp else 1.5.dp,
-            color = if (isCurrentUser) CobaltPrimary else OutlineSoft
+            width = if (isCurrentUser) 2.dp else 1.dp,
+            color = if (isCurrentUser) theme.blue else theme.chipLine
         )
     ) {
         Row(
@@ -351,7 +439,7 @@ private fun LeaderboardRowCard(
                 Text(
                     text = if (isCurrentUser) "${row.entry.nickname} (You)" else row.entry.nickname,
                     style = MaterialTheme.typography.titleMedium,
-                    color = InkDark,
+                    color = theme.surfaceText,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -359,7 +447,7 @@ private fun LeaderboardRowCard(
                 Text(
                     text = "${row.gamesPlayed} games played",
                     style = MaterialTheme.typography.labelSmall,
-                    color = InkMuted
+                    color = theme.surfaceMutedText
                 )
             }
 
@@ -367,13 +455,13 @@ private fun LeaderboardRowCard(
                 Text(
                     text = "${row.wins} Wins",
                     style = MaterialTheme.typography.titleSmall,
-                    color = CobaltPrimary,
+                    color = winsColor,
                     fontWeight = FontWeight.ExtraBold
                 )
                 Text(
                     text = "${row.winRatePercent}% WR",
                     style = MaterialTheme.typography.labelMedium,
-                    color = MintGreenDark,
+                    color = wrColor,
                     fontWeight = FontWeight.Bold
                 )
             }

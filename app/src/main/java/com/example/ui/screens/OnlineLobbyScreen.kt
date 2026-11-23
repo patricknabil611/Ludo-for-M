@@ -28,13 +28,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PersonOutline
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -47,8 +46,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -59,6 +57,8 @@ import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.data.PlayerAvatarCodec
 import com.example.engine.BotDifficulty
+import com.example.engine.PlayerColor
+import com.example.engine.TurnTimerOption
 import com.example.online.OnlineRoom
 import com.example.online.OnlineRoomSeat
 import com.example.online.SeatControl
@@ -66,19 +66,7 @@ import com.example.ui.components.CartoonButton
 import com.example.ui.components.CartoonCard
 import com.example.ui.components.CartoonIconButton
 import com.example.ui.components.PlayerAvatarBadge
-import com.example.ui.theme.CobaltDark
-import com.example.ui.theme.CobaltPrimary
-import com.example.ui.theme.CoralPink
-import com.example.ui.theme.CoralPinkDark
-import com.example.ui.theme.CreamBackground
-import com.example.ui.theme.InkDark
-import com.example.ui.theme.InkMuted
-import com.example.ui.theme.MintGreen
-import com.example.ui.theme.MintGreenDark
-import com.example.ui.theme.OutlineSoft
-import com.example.ui.theme.SkyTopTint
-import com.example.ui.theme.SunnyGold
-import com.example.ui.theme.SunnyGoldDark
+import com.example.ui.theme.LocalLudoTheme
 import com.example.ui.theme.palette
 
 /**
@@ -97,22 +85,29 @@ fun OnlineLobbyScreen(
     onStartMatch: () -> Unit,
     onLeaveLobby: () -> Unit
 ) {
+    val theme = LocalLudoTheme.current
     val context = LocalContext.current
     var copiedNotice by remember { mutableStateOf(false) }
 
     BackHandler { onLeaveLobby() }
 
+    val blueOnBg = theme.accessibleAccentOn(theme.blue, theme.bg)
+    val blueOnSurface = theme.accessibleAccentOn(theme.blue, theme.surface)
+    val greenOnSurface = theme.accessibleAccentOn(theme.green, theme.surface)
+    val errorBg = lerp(theme.surface, theme.red, if (theme.isDarkSurface) 0.22f else 0.10f)
+    val errorTextColor = theme.accessibleAccentOn(theme.red, errorBg)
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(SkyTopTint, CreamBackground)))
+            .background(theme.bg)
             .safeDrawingPadding()
             .testTag("online_lobby_screen"),
         contentAlignment = Alignment.TopCenter
     ) {
         if (room == null) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = CobaltPrimary)
+                CircularProgressIndicator(color = theme.blue)
             }
             return@Box
         }
@@ -143,12 +138,13 @@ fun OnlineLobbyScreen(
                     Text(
                         text = stringResource(R.string.online_lobby_title),
                         style = MaterialTheme.typography.headlineMedium,
-                        color = InkDark
+                        color = theme.text
                     )
+                    val timerLabel = TurnTimerOption.fromSeconds(room.turnTimerSeconds).label
                     Text(
-                        text = "${room.mode.title} • ${room.targetPlayerCount} Players",
+                        text = "${room.mode.title} • ${room.matchFormat.label} • Timer: $timerLabel",
                         style = MaterialTheme.typography.labelLarge,
-                        color = CobaltPrimary
+                        color = blueOnBg
                     )
                 }
             }
@@ -156,8 +152,8 @@ fun OnlineLobbyScreen(
             // 6-Character Room Code Share Card
             CartoonCard(
                 modifier = Modifier.fillMaxWidth(),
-                borderColor = CobaltPrimary,
-                cornerRadius = 26.dp
+                borderColor = theme.blue.copy(alpha = 0.55f),
+                cornerRadius = 24.dp
             ) {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
@@ -166,7 +162,7 @@ fun OnlineLobbyScreen(
                     Text(
                         text = stringResource(R.string.online_room_code_label),
                         style = MaterialTheme.typography.labelLarge,
-                        color = InkMuted
+                        color = theme.surfaceMutedText
                     )
                     Spacer(Modifier.height(6.dp))
                     Text(
@@ -175,7 +171,7 @@ fun OnlineLobbyScreen(
                             letterSpacing = 6.sp,
                             fontWeight = FontWeight.ExtraBold
                         ),
-                        color = CobaltPrimary,
+                        color = blueOnSurface,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.testTag("lobby_room_code_text")
                     )
@@ -184,7 +180,7 @@ fun OnlineLobbyScreen(
                         Text(
                             text = "Code copied!",
                             style = MaterialTheme.typography.labelMedium,
-                            color = MintGreenDark
+                            color = greenOnSurface
                         )
                     }
                     Spacer(Modifier.height(12.dp))
@@ -201,9 +197,7 @@ fun OnlineLobbyScreen(
                             },
                             tag = "lobby_copy_code_button",
                             icon = Icons.Filled.ContentCopy,
-                            containerColor = SunnyGold,
-                            lipColor = SunnyGoldDark,
-                            contentColor = Color(0xFF2C1E00),
+                            containerColor = theme.yellow,
                             minHeight = 48.dp,
                             modifier = Modifier.weight(1f)
                         )
@@ -219,8 +213,8 @@ fun OnlineLobbyScreen(
                             },
                             tag = "lobby_share_code_button",
                             icon = Icons.Filled.Share,
-                            containerColor = CobaltPrimary,
-                            lipColor = CobaltDark,
+                            containerColor = theme.primaryActionBg,
+                            contentColor = theme.onPrimaryAction,
                             minHeight = 48.dp,
                             modifier = Modifier.weight(1f)
                         )
@@ -231,14 +225,14 @@ fun OnlineLobbyScreen(
             errorMessage?.let { err ->
                 Surface(
                     shape = RoundedCornerShape(14.dp),
-                    color = CoralPink.copy(alpha = 0.12f),
-                    border = BorderStroke(1.5.dp, CoralPink),
+                    color = errorBg,
+                    border = BorderStroke(1.5.dp, theme.red),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
                         text = err,
                         style = MaterialTheme.typography.bodySmall,
-                        color = CoralPink,
+                        color = errorTextColor,
                         modifier = Modifier.padding(12.dp)
                     )
                 }
@@ -247,13 +241,12 @@ fun OnlineLobbyScreen(
             // Seats List
             CartoonCard(
                 modifier = Modifier.fillMaxWidth(),
-                borderColor = OutlineSoft,
                 cornerRadius = 24.dp
             ) {
                 Text(
                     text = "Players ($filledCount/${room.seats.size})",
                     style = MaterialTheme.typography.titleLarge,
-                    color = InkDark
+                    color = theme.surfaceText
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
@@ -263,14 +256,18 @@ fun OnlineLobbyScreen(
                         "Waiting for the host to start the match..."
                     },
                     style = MaterialTheme.typography.bodySmall,
-                    color = InkMuted
+                    color = theme.surfaceMutedText
                 )
                 Spacer(Modifier.height(12.dp))
 
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     room.seats.forEach { seat ->
+                        val teamLabel = if (room.matchFormat.isTeamFormat) {
+                            if (seat.color == PlayerColor.RED || seat.color == PlayerColor.YELLOW) "Team A" else "Team B"
+                        } else null
                         LobbySeatRow(
                             seat = seat,
+                            teamLabel = teamLabel,
                             isRoomHostSeat = seat.uid.isNotBlank() && seat.uid == room.hostUid,
                             isMe = seat.uid == myUid,
                             canConfigureBot = isHost && seat.controllerType != SeatControl.HUMAN,
@@ -287,8 +284,7 @@ fun OnlineLobbyScreen(
                     tag = "lobby_start_match_button",
                     icon = Icons.Filled.PlayArrow,
                     enabled = !isBusy,
-                    containerColor = MintGreen,
-                    lipColor = MintGreenDark,
+                    containerColor = theme.green,
                     minHeight = 60.dp,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -298,8 +294,7 @@ fun OnlineLobbyScreen(
                 text = stringResource(R.string.online_leave_lobby),
                 onClick = onLeaveLobby,
                 tag = "lobby_leave_button",
-                containerColor = CoralPink,
-                lipColor = CoralPinkDark,
+                containerColor = theme.red,
                 minHeight = 50.dp,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -312,12 +307,21 @@ fun OnlineLobbyScreen(
 @Composable
 private fun LobbySeatRow(
     seat: OnlineRoomSeat,
+    teamLabel: String?,
     isRoomHostSeat: Boolean,
     isMe: Boolean,
     canConfigureBot: Boolean,
     onSetBot: (BotDifficulty?) -> Unit
 ) {
-    val palette = seat.color.palette()
+    val theme = LocalLudoTheme.current
+    val palette = seat.color.palette(theme)
+    val chipColors = FilterChipDefaults.filterChipColors(
+        containerColor = theme.surface,
+        labelColor = theme.surfaceText,
+        selectedContainerColor = theme.primaryActionBg,
+        selectedLabelColor = theme.onPrimaryAction
+    )
+
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(18.dp),
@@ -330,18 +334,19 @@ private fun LobbySeatRow(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 if (seat.controllerType == SeatControl.OPEN) {
+                    val emptyAvatarBg = palette.primary.copy(alpha = 0.72f)
                     Box(
                         modifier = Modifier
                             .size(42.dp)
                             .clip(CircleShape)
-                            .background(palette.primary.copy(alpha = 0.55f))
-                            .border(2.dp, Color.White, CircleShape),
+                            .background(emptyAvatarBg)
+                            .border(2.dp, theme.tokenEdge, CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Filled.PersonOutline,
                             contentDescription = seat.nickname,
-                            tint = Color.White,
+                            tint = theme.contrastingTextOn(palette.primary),
                             modifier = Modifier.size(22.dp)
                         )
                     }
@@ -369,17 +374,18 @@ private fun LobbySeatRow(
                     Text(
                         text = seat.nickname,
                         style = MaterialTheme.typography.titleMedium,
-                        color = InkDark,
+                        color = theme.surfaceText,
                         fontWeight = FontWeight.Bold
                     )
+                    val prefix = if (teamLabel != null) "${seat.color.displayName} ($teamLabel)" else seat.color.displayName
                     Text(
                         text = when (seat.controllerType) {
-                            SeatControl.HUMAN -> if (badge.isNotEmpty()) "${seat.color.displayName} • $badge" else seat.color.displayName
-                            SeatControl.BOT -> "${seat.color.displayName} • ${seat.botDifficulty.displayName} Bot"
-                            SeatControl.OPEN -> "${seat.color.displayName} • Waiting for friend..."
+                            SeatControl.HUMAN -> if (badge.isNotEmpty()) "$prefix • $badge" else prefix
+                            SeatControl.BOT -> "$prefix • ${seat.botDifficulty.displayName} Bot"
+                            SeatControl.OPEN -> "$prefix • Waiting for friend..."
                         },
                         style = MaterialTheme.typography.labelMedium,
-                        color = InkMuted
+                        color = theme.surfaceMutedText
                     )
                 }
             }
@@ -390,16 +396,32 @@ private fun LobbySeatRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    val isOpen = seat.controllerType == SeatControl.OPEN
                     FilterChip(
-                        selected = seat.controllerType == SeatControl.OPEN,
+                        selected = isOpen,
                         onClick = { onSetBot(null) },
-                        label = { Text("Open") }
+                        label = { Text("Open") },
+                        colors = chipColors,
+                        border = FilterChipDefaults.filterChipBorder(
+                            enabled = true,
+                            selected = isOpen,
+                            borderColor = theme.chipLine,
+                            selectedBorderColor = theme.primaryActionBg
+                        )
                     )
                     BotDifficulty.entries.forEach { diff ->
+                        val isBotDiff = seat.controllerType == SeatControl.BOT && seat.botDifficulty == diff
                         FilterChip(
-                            selected = seat.controllerType == SeatControl.BOT && seat.botDifficulty == diff,
+                            selected = isBotDiff,
                             onClick = { onSetBot(diff) },
-                            label = { Text(diff.displayName) }
+                            label = { Text(diff.displayName) },
+                            colors = chipColors,
+                            border = FilterChipDefaults.filterChipBorder(
+                                enabled = true,
+                                selected = isBotDiff,
+                                borderColor = theme.chipLine,
+                                selectedBorderColor = theme.primaryActionBg
+                            )
                         )
                     }
                 }

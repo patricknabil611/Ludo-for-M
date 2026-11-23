@@ -33,15 +33,22 @@ service cloud.firestore {
     function isValidMode(mode) {
       return mode is string && mode in [
         'CLASSIC',
-        'QUICK',
+        'BLOCKADES',
         'MASTER',
-        'POWER_UP',
+        'QUICK',
+        'ARROW',
+        'MAGIC',
         'TIMED',
-        'TEAMS_2V2',
-        'ONE_TOKEN_RACE',
         'CHAOS',
-        'ELIMINATION'
+        'ELIMINATION',
+        'POWER_UP',
+        'TEAMS_2V2',
+        'ONE_TOKEN_RACE'
       ];
+    }
+
+    function isValidMatchFormat(format) {
+      return format is string && format in ['ONE_VS_ONE', 'FOUR_PLAYERS', 'TEAMS_2V2'];
     }
 
     function isValidRoomStatus(status) {
@@ -77,6 +84,7 @@ service cloud.firestore {
              data.weeklyWins is int && data.weeklyWins >= 0 &&
              data.weeklyGamesPlayed is int && data.weeklyGamesPlayed >= data.weeklyWins &&
              data.weekKey is string && data.weekKey.size() >= 4 && data.weekKey.size() <= 16 &&
+             (!('modeWins' in data) || data.modeWins is map) &&
              data.createdAt is timestamp && data.createdAt <= request.time &&
              data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
@@ -109,6 +117,7 @@ service cloud.firestore {
              data.weeklyWins is int && data.weeklyWins >= 0 &&
              data.weeklyGamesPlayed is int && data.weeklyGamesPlayed >= data.weeklyWins &&
              data.weekKey is string && data.weekKey.size() >= 4 && data.weekKey.size() <= 16 &&
+             (!('modeWins' in data) || data.modeWins is map) &&
              data.createdAt is timestamp && data.createdAt <= request.time &&
              data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
@@ -117,8 +126,10 @@ service cloud.firestore {
       return isValidRoomCode(data.roomCode) &&
              data.hostUid is string && data.hostUid.size() <= 128 &&
              isValidMode(data.mode) &&
+             (!('matchFormat' in data) || isValidMatchFormat(data.matchFormat)) &&
              data.targetPlayerCount is int && data.targetPlayerCount >= 2 && data.targetPlayerCount <= 4 &&
              data.timedDurationSeconds is int && data.timedDurationSeconds >= 60 && data.timedDurationSeconds <= 1800 &&
+             (!('turnTimerSeconds' in data) || (data.turnTimerSeconds is int && data.turnTimerSeconds >= 0 && data.turnTimerSeconds <= 60)) &&
              isValidRoomStatus(data.status) &&
              data.publicMatchmaking is bool &&
              data.memberUids is list && data.memberUids.size() <= 4 &&
@@ -132,8 +143,8 @@ service cloud.firestore {
              data.lastActionSummary is string && data.lastActionSummary.size() <= 180 &&
              data.lastMovedColor is string && data.lastMovedColor.size() <= 16 &&
              data.lastMovedTokenId is int && data.lastMovedTokenId >= -1 && data.lastMovedTokenId <= 3 &&
-             data.lastMovedFromProgress is int && data.lastMovedFromProgress >= -1 && data.lastMovedFromProgress <= 56 &&
-             data.lastMovedToProgress is int && data.lastMovedToProgress >= -1 && data.lastMovedToProgress <= 56 &&
+             data.lastMovedFromProgress is int && data.lastMovedFromProgress >= -1 && data.lastMovedFromProgress <= 57 &&
+             data.lastMovedToProgress is int && data.lastMovedToProgress >= -1 && data.lastMovedToProgress <= 57 &&
              data.gameStateMap is map &&
              data.turnStartedAt is timestamp && data.turnStartedAt <= request.time &&
              data.createdAt is timestamp && data.createdAt <= request.time &&
@@ -156,7 +167,7 @@ service cloud.firestore {
                        ]) &&
                        incoming().keys().hasOnly([
                          'userId', 'nickname', 'avatarId', 'googleLinked', 'wins', 'gamesPlayed',
-                         'weeklyWins', 'weeklyGamesPlayed', 'weekKey', 'createdAt', 'updatedAt'
+                         'weeklyWins', 'weeklyGamesPlayed', 'weekKey', 'modeWins', 'createdAt', 'updatedAt'
                        ]) &&
                        isValidUserProfile(incoming());
 
@@ -168,7 +179,7 @@ service cloud.firestore {
                        incoming().createdAt == existing().createdAt &&
                        incoming().diff(existing()).affectedKeys().hasOnly([
                          'nickname', 'avatarId', 'googleLinked', 'wins', 'gamesPlayed',
-                         'weeklyWins', 'weeklyGamesPlayed', 'weekKey', 'updatedAt'
+                         'weeklyWins', 'weeklyGamesPlayed', 'weekKey', 'modeWins', 'updatedAt'
                        ]);
 
       allow delete: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
@@ -216,7 +227,7 @@ service cloud.firestore {
                        ]) &&
                        incoming().keys().hasOnly([
                          'userId', 'nickname', 'avatarId', 'googleLinked', 'wins', 'gamesPlayed',
-                         'weeklyWins', 'weeklyGamesPlayed', 'weekKey', 'createdAt', 'updatedAt'
+                         'weeklyWins', 'weeklyGamesPlayed', 'weekKey', 'modeWins', 'createdAt', 'updatedAt'
                        ]) &&
                        isValidLeaderboardEntry(incoming());
 
@@ -232,7 +243,7 @@ service cloud.firestore {
                        incoming().gamesPlayed - existing().gamesPlayed <= 50 &&
                        incoming().diff(existing()).affectedKeys().hasOnly([
                          'nickname', 'avatarId', 'wins', 'gamesPlayed',
-                         'weeklyWins', 'weeklyGamesPlayed', 'weekKey', 'updatedAt'
+                         'weeklyWins', 'weeklyGamesPlayed', 'weekKey', 'modeWins', 'updatedAt'
                        ]);
 
       allow delete: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
@@ -266,7 +277,8 @@ service cloud.firestore {
                          'gameStateMap', 'turnStartedAt', 'createdAt', 'updatedAt'
                        ]) &&
                        incoming().keys().hasOnly([
-                         'roomCode', 'hostUid', 'mode', 'targetPlayerCount', 'timedDurationSeconds',
+                         'roomCode', 'hostUid', 'mode', 'matchFormat', 'turnTimerSeconds',
+                         'targetPlayerCount', 'timedDurationSeconds',
                          'status', 'publicMatchmaking', 'memberUids', 'seats', 'diceSeed',
                          'rollSeq', 'turnSeq', 'lastActionType', 'lastActionSummary',
                          'lastMovedColor', 'lastMovedTokenId', 'lastMovedFromProgress', 'lastMovedToProgress',
@@ -302,7 +314,8 @@ service cloud.firestore {
                            (request.auth.uid in existing().memberUids) &&
                            incoming().status in ['LOBBY', 'PLAYING', 'CLOSED'] &&
                            incoming().diff(existing()).affectedKeys().hasOnly([
-                             'hostUid', 'memberUids', 'seats', 'status', 'mode', 'targetPlayerCount',
+                             'hostUid', 'memberUids', 'seats', 'status', 'mode', 'matchFormat',
+                             'turnTimerSeconds', 'targetPlayerCount',
                              'timedDurationSeconds', 'diceSeed', 'rollSeq', 'turnSeq',
                              'lastActionType', 'lastActionSummary', 'gameStateMap', 'turnStartedAt', 'updatedAt'
                            ])

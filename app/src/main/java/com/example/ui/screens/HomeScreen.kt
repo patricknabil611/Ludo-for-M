@@ -22,12 +22,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
-import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.EmojiEvents
-import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Settings
@@ -41,8 +39,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
@@ -59,18 +57,8 @@ import com.example.ui.components.CartoonCard
 import com.example.ui.components.CartoonIconButton
 import com.example.ui.components.PlayerAvatarBadge
 import com.example.ui.online.OnlineAuthUiState
-import com.example.ui.theme.CobaltDark
-import com.example.ui.theme.CobaltPrimary
-import com.example.ui.theme.CoralPink
-import com.example.ui.theme.CreamBackground
-import com.example.ui.theme.InkDark
-import com.example.ui.theme.InkMuted
-import com.example.ui.theme.MintGreen
-import com.example.ui.theme.MintGreenDark
-import com.example.ui.theme.OutlineSoft
-import com.example.ui.theme.SkyTopTint
-import com.example.ui.theme.SunnyGold
-import com.example.ui.theme.SunnyGoldDark
+import com.example.ui.theme.LocalLudoTheme
+import com.example.ui.theme.ludoShadow
 
 @Composable
 fun HomeScreen(
@@ -86,14 +74,15 @@ fun HomeScreen(
     onAccountClick: () -> Unit = {},
     onSettingsClick: () -> Unit
 ) {
+    val theme = LocalLudoTheme.current
+    val resumeBg = lerp(theme.surface, theme.green, if (theme.isDarkSurface) 0.16f else 0.10f)
+    val signedInPillBg = lerp(theme.surface, theme.blue, if (theme.isDarkSurface) 0.18f else 0.08f)
+    val heroTitleColor = theme.accessibleAccentOn(theme.blue, theme.surface)
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(SkyTopTint, CreamBackground)
-                )
-            )
+            .background(theme.bg)
             .safeDrawingPadding()
             .testTag("home_screen"),
         contentAlignment = Alignment.TopCenter
@@ -116,12 +105,13 @@ fun HomeScreen(
                     onClick = onAccountClick,
                     modifier = Modifier
                         .weight(1f, fill = false)
+                        .ludoShadow(theme.cardShadow, 999.dp)
                         .testTag("home_account_pill"),
                     shape = RoundedCornerShape(999.dp),
-                    color = if (authState.isSignedInWithGoogle) Color(0xFFEBF3FF) else Color.White,
+                    color = if (authState.isSignedInWithGoogle) signedInPillBg else theme.surface,
                     border = BorderStroke(
-                        2.dp,
-                        if (authState.isSignedInWithGoogle) CobaltPrimary else OutlineSoft
+                        width = if (authState.isSignedInWithGoogle) 2.dp else 1.dp,
+                        color = if (authState.isSignedInWithGoogle) theme.blue else theme.chipLine
                     )
                 ) {
                     Row(
@@ -142,7 +132,7 @@ fun HomeScreen(
                                 else -> stringResource(R.string.home_sign_in_badge)
                             },
                             style = MaterialTheme.typography.labelMedium,
-                            color = InkDark,
+                            color = theme.surfaceText,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -175,9 +165,9 @@ fun HomeScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("home_resume_card"),
-                    borderColor = MintGreenDark,
-                    containerColor = Color(0xFFE9FBF2),
-                    cornerRadius = 24.dp
+                    borderColor = theme.green.copy(alpha = 0.55f),
+                    containerColor = resumeBg,
+                    cornerRadius = 22.dp
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -188,13 +178,13 @@ fun HomeScreen(
                             Text(
                                 text = stringResource(R.string.home_resume_title),
                                 style = MaterialTheme.typography.titleMedium,
-                                color = InkDark,
+                                color = theme.surfaceText,
                                 fontWeight = FontWeight.ExtraBold
                             )
                             Text(
                                 text = "${savedGameSummary.mode.title} • ${savedGameSummary.activePlayerName}'s turn (Turn ${savedGameSummary.turnNumber})",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = InkMuted,
+                                color = theme.surfaceMutedText,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -204,8 +194,8 @@ fun HomeScreen(
                             icon = Icons.Filled.Close,
                             contentDescription = stringResource(R.string.cd_discard_saved_game),
                             onClick = onDiscardSavedGame,
-                            iconTint = CoralPink,
-                            borderColor = CoralPink.copy(alpha = 0.45f),
+                            iconTint = theme.accessibleAccentOn(theme.red, theme.surface),
+                            borderColor = theme.red.copy(alpha = 0.45f),
                             modifier = Modifier.testTag("home_discard_saved_button")
                         )
                         Spacer(Modifier.width(6.dp))
@@ -214,8 +204,7 @@ fun HomeScreen(
                             onClick = onResumeSavedGame,
                             tag = "home_resume_button",
                             icon = Icons.Filled.PlayArrow,
-                            containerColor = MintGreen,
-                            lipColor = MintGreenDark,
+                            containerColor = theme.green,
                             minHeight = 48.dp,
                             modifier = Modifier.width(128.dp)
                         )
@@ -227,8 +216,7 @@ fun HomeScreen(
             // Hero Card
             CartoonCard(
                 modifier = Modifier.fillMaxWidth(),
-                borderColor = CobaltPrimary.copy(alpha = 0.25f),
-                cornerRadius = 32.dp
+                cornerRadius = 26.dp
             ) {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
@@ -241,8 +229,8 @@ fun HomeScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(195.dp)
-                            .clip(RoundedCornerShape(22.dp))
-                            .border(2.dp, OutlineSoft, RoundedCornerShape(22.dp))
+                            .clip(RoundedCornerShape(20.dp))
+                            .border(1.5.dp, theme.chipLine, RoundedCornerShape(20.dp))
                     )
 
                     Spacer(Modifier.height(14.dp))
@@ -250,7 +238,7 @@ fun HomeScreen(
                     Text(
                         text = stringResource(R.string.app_name),
                         style = MaterialTheme.typography.displayMedium,
-                        color = CobaltPrimary,
+                        color = heroTitleColor,
                         textAlign = TextAlign.Center
                     )
 
@@ -259,7 +247,7 @@ fun HomeScreen(
                     Text(
                         text = stringResource(R.string.splash_tagline),
                         style = MaterialTheme.typography.bodyLarge,
-                        color = InkMuted,
+                        color = theme.surfaceMutedText,
                         textAlign = TextAlign.Center
                     )
 
@@ -272,19 +260,19 @@ fun HomeScreen(
                         RulePill(
                             icon = Icons.Filled.Casino,
                             label = "9 Modes",
-                            tint = Color(0xFFFF3B4E),
+                            tint = theme.red,
                             modifier = Modifier.weight(1f)
                         )
                         RulePill(
                             icon = Icons.Filled.Star,
                             label = "Power-Ups",
-                            tint = SunnyGoldDark,
+                            tint = theme.yellow,
                             modifier = Modifier.weight(1f)
                         )
                         RulePill(
                             icon = Icons.Filled.Timer,
                             label = "Online & Bots",
-                            tint = CobaltPrimary,
+                            tint = theme.blue,
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -299,11 +287,9 @@ fun HomeScreen(
                 onClick = onPlayClick,
                 tag = "home_play_button",
                 icon = Icons.Filled.PlayArrow,
-                containerColor = MintGreen,
-                lipColor = MintGreenDark,
-                contentColor = Color.White,
+                containerColor = theme.green,
                 minHeight = 60.dp,
-                cornerRadius = 26.dp,
+                cornerRadius = 22.dp,
                 modifier = Modifier.fillMaxWidth()
             )
 
@@ -315,11 +301,10 @@ fun HomeScreen(
                 onClick = onPlayOnlineClick,
                 tag = "home_play_online_button",
                 icon = Icons.Filled.Public,
-                containerColor = CobaltPrimary,
-                lipColor = CobaltDark,
-                contentColor = Color.White,
+                containerColor = theme.primaryActionBg,
+                contentColor = theme.onPrimaryAction,
                 minHeight = 58.dp,
-                cornerRadius = 26.dp,
+                cornerRadius = 22.dp,
                 modifier = Modifier.fillMaxWidth()
             )
 
@@ -335,11 +320,9 @@ fun HomeScreen(
                     onClick = onLeaderboardClick,
                     tag = "home_leaderboard_button",
                     icon = Icons.Filled.EmojiEvents,
-                    containerColor = SunnyGold,
-                    lipColor = SunnyGoldDark,
-                    contentColor = Color(0xFF2C1E00),
+                    containerColor = theme.yellow,
                     minHeight = 54.dp,
-                    cornerRadius = 22.dp,
+                    cornerRadius = 20.dp,
                     modifier = Modifier.weight(1f)
                 )
                 CartoonButton(
@@ -347,11 +330,11 @@ fun HomeScreen(
                     onClick = onStatsClick,
                     tag = "home_stats_button",
                     icon = Icons.Filled.BarChart,
-                    containerColor = Color.White,
-                    lipColor = OutlineSoft,
-                    contentColor = InkDark,
+                    containerColor = theme.surface,
+                    lipColor = theme.chipLine,
+                    contentColor = theme.surfaceText,
                     minHeight = 54.dp,
-                    cornerRadius = 22.dp,
+                    cornerRadius = 20.dp,
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -368,10 +351,14 @@ private fun RulePill(
     tint: Color,
     modifier: Modifier = Modifier
 ) {
+    val theme = LocalLudoTheme.current
+    val pillBg = lerp(theme.surface, tint, if (theme.isDarkSurface) 0.18f else 0.10f)
+    val iconTint = theme.accessibleAccentOn(tint, pillBg)
+
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(14.dp),
-        color = tint.copy(alpha = 0.10f)
+        color = pillBg
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
@@ -381,14 +368,14 @@ private fun RulePill(
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = tint,
+                tint = iconTint,
                 modifier = Modifier.size(16.dp)
             )
             Spacer(Modifier.size(4.dp))
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelSmall,
-                color = InkDark,
+                color = theme.surfaceText,
                 maxLines = 1
             )
         }

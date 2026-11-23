@@ -3,17 +3,17 @@ package com.example.ui.online
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.engine.GameModeId
 import com.example.online.LeaderboardSnapshot
 import com.example.online.OnlineProfileAndLeaderboardRepository
 import com.example.online.friendlyNetworkErrorMessage
-import com.example.online.unwrapFirestoreError
-import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -31,7 +31,7 @@ sealed interface LeaderboardUiState {
 
 /**
  * Auth-scoped ViewModel (keyed by uid) for the Google-only Global Leaderboard
- * with All-Time & This Week tabs and sticky player rank card.
+ * with All-Time & This Week tabs, per-mode wins filter, and sticky player rank card.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class LeaderboardViewModel(
@@ -42,17 +42,21 @@ class LeaderboardViewModel(
     private val _selectedTab = MutableStateFlow(LeaderboardTab.ALL_TIME)
     val selectedTab: StateFlow<LeaderboardTab> = _selectedTab.asStateFlow()
 
+    private val _selectedMode = MutableStateFlow<GameModeId?>(null)
+    val selectedMode: StateFlow<GameModeId?> = _selectedMode.asStateFlow()
+
     private val _uiState = MutableStateFlow<LeaderboardUiState>(LeaderboardUiState.Loading)
     val uiState: StateFlow<LeaderboardUiState> = _uiState.asStateFlow()
 
     init {
         viewModelScope.launch {
-            _selectedTab
-                .flatMapLatest { tab ->
+            combine(_selectedTab, _selectedMode) { tab, mode -> tab to mode }
+                .flatMapLatest { (tab, mode) ->
                     _uiState.value = LeaderboardUiState.Loading
                     repo.observeLeaderboard(
                         myUid = uid,
-                        weekly = tab == LeaderboardTab.THIS_WEEK
+                        weekly = tab == LeaderboardTab.THIS_WEEK,
+                        modeFilter = mode
                     )
                 }
                 .catch { error ->
@@ -78,6 +82,18 @@ class LeaderboardViewModel(
     fun selectTab(tab: LeaderboardTab) {
         if (_selectedTab.value != tab) {
             _selectedTab.value = tab
+            if (tab == LeaderboardTab.THIS_WEEK) {
+                _selectedMode.value = null
+            }
+        }
+    }
+
+    fun selectModeFilter(mode: GameModeId?) {
+        if (_selectedMode.value != mode) {
+            _selectedMode.value = mode
+            if (mode != null) {
+                _selectedTab.value = LeaderboardTab.ALL_TIME
+            }
         }
     }
 

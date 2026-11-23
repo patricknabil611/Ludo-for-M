@@ -32,7 +32,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Warning
@@ -57,17 +56,19 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.R
+import com.example.engine.GameModeId
 import com.example.engine.PlayerColor
 import com.example.ui.components.CartoonButton
 import com.example.ui.components.CartoonCard
@@ -75,19 +76,9 @@ import com.example.ui.components.CartoonIconButton
 import com.example.ui.components.ConfettiOverlay
 import com.example.ui.game.DiceCube3DEngine
 import com.example.ui.game.LudoDice3D
-import com.example.ui.theme.CobaltDark
-import com.example.ui.theme.CobaltPrimary
-import com.example.ui.theme.CoralPink
-import com.example.ui.theme.CreamBackground
-import com.example.ui.theme.InkDark
-import com.example.ui.theme.InkMuted
-import com.example.ui.theme.MintGreen
-import com.example.ui.theme.MintGreenDark
-import com.example.ui.theme.OutlineSoft
-import com.example.ui.theme.SafeStarGold
-import com.example.ui.theme.SkyTopTint
-import com.example.ui.theme.SunnyGold
-import com.example.ui.theme.SunnyGoldDark
+import com.example.ui.theme.LocalLudoTheme
+import com.example.ui.theme.LudoTheme
+import com.example.ui.theme.modeAccentColor
 import com.example.ui.theme.palette
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -99,65 +90,67 @@ private enum class TutorialLesson(
     val badge: String,
     val title: String,
     val instruction: String,
-    val ruleSummary: String,
-    val accent: Color
+    val ruleSummary: String
 ) {
     ROLL_DIE(
         badge = "1 OF 8 • ROLLING",
         title = "Roll the Die",
         instruction = "Tap the 3D die below to roll!",
-        ruleSummary = "Each turn starts by rolling the die. Players take turns clockwise around the board.",
-        accent = CobaltPrimary
+        ruleSummary = "Each turn starts by rolling the die. Players take turns clockwise around the board."
     ),
     GET_OUT_WITH_SIX(
         badge = "2 OF 8 • LEAVING BASE",
         title = "Roll a 6 to Enter",
         instruction = "Roll a 6, then tap your Red token in Base to enter!",
-        ruleSummary = "Tokens start in your corner base. You must roll a 6 to move a token onto your colored Start square.",
-        accent = Color(0xFFFF3B4E)
+        ruleSummary = "Tokens start in your corner base. You must roll a 6 to move a token onto your colored Start square."
     ),
     MOVE_TOKEN(
         badge = "3 OF 8 • MOVING",
         title = "Move Along the Track",
         instruction = "Roll a 4, then tap the track to hop 4 spaces forward!",
-        ruleSummary = "Tokens travel clockwise around the 52-square track before turning into your private colored home column.",
-        accent = Color(0xFF00A878)
+        ruleSummary = "Tokens travel clockwise around the 52-square track before turning into your private colored home column."
     ),
     CAPTURE_OPPONENT(
         badge = "4 OF 8 • CAPTURING",
         title = "Capture Rivals",
         instruction = "Tap the glowing Red token to land on Blue!",
-        ruleSummary = "Landing on an opponent's token on a regular square sends it back to base! Captures do not give an extra roll.",
-        accent = CoralPink
+        ruleSummary = "Landing on an opponent's token on a regular square sends it back to base! Captures do not give an extra roll."
     ),
     SAFE_STARS(
         badge = "5 OF 8 • SAFE STARS",
         title = "Safe Star Squares",
-        instruction = "Tap to land on the golden Star shared with Green!",
-        ruleSummary = "8 Safe Squares (4 Start squares + 4 Star squares) protect every token on them — rivals share safely with no capture.",
-        accent = SunnyGoldDark
+        instruction = "Tap to land on the Star shared with Green!",
+        ruleSummary = "8 Safe Squares (4 Start squares + 4 Star squares) protect every token on them — rivals share safely with no capture."
     ),
     EXACT_ROLL_HOME(
         badge = "6 OF 8 • REACHING HOME",
         title = "Exact Roll to Finish",
         instruction = "Try rolling! Only an exact 2 reaches the Home triangle.",
-        ruleSummary = "A token must land in the center Home triangle with the exact roll. Overshooting can't move that token!",
-        accent = Color(0xFF8338EC)
+        ruleSummary = "A token must land in the center Home triangle with the exact roll. Overshooting can't move that token!"
     ),
     EXTRA_ROLL(
         badge = "7 OF 8 • BONUS ROLLS",
         title = "6 Gives a Bonus Roll",
         instruction = "Tap the die to roll a 6 and earn a Bonus Roll!",
-        ruleSummary = "Whenever you roll a 6 and play your move, you immediately get another roll.",
-        accent = MintGreenDark
+        ruleSummary = "Whenever you roll a 6 and play your move, you immediately get another roll."
     ),
     TRIPLE_SIX(
         badge = "8 OF 8 • TRIPLE-6 RULE",
         title = "Watch Out for Triple 6s!",
         instruction = "Tap the die 3 times to see what happens on three 6s in a row!",
-        ruleSummary = "Rolling three 6s in a row cancels your turn immediately — the third 6 is not played and the next player goes.",
-        accent = Color(0xFFE63946)
-    )
+        ruleSummary = "Rolling three 6s in a row cancels your turn immediately — the third 6 is not played and the next player goes."
+    );
+
+    fun accentColor(theme: LudoTheme): Color = when (this) {
+        ROLL_DIE -> theme.blue
+        GET_OUT_WITH_SIX -> theme.red
+        MOVE_TOKEN -> theme.green
+        CAPTURE_OPPONENT -> theme.red
+        SAFE_STARS -> theme.yellow
+        EXACT_ROLL_HOME -> modeAccentColor(GameModeId.MAGIC, theme)
+        EXTRA_ROLL -> theme.green
+        TRIPLE_SIX -> theme.red
+    }
 }
 
 /**
@@ -171,9 +164,11 @@ fun TutorialScreen(
     onPlayNowClick: () -> Unit = onCompleteOrSkip,
     onBackClick: () -> Unit = onCompleteOrSkip
 ) {
+    val theme = LocalLudoTheme.current
     val lessons = remember { TutorialLesson.entries }
     var stepIndex by rememberSaveable { mutableIntStateOf(0) }
     val lesson = lessons[stepIndex]
+    val lessonAccent = lesson.accentColor(theme)
     val isFirst = stepIndex == 0
     val isLast = stepIndex == lessons.lastIndex
 
@@ -201,7 +196,6 @@ fun TutorialScreen(
     }
 
     LaunchedEffect(stepIndex) {
-        // Initialize default die face for lessons that start post-roll
         when (lesson) {
             TutorialLesson.CAPTURE_OPPONENT -> diceVal = 3
             TutorialLesson.SAFE_STARS -> diceVal = 2
@@ -212,7 +206,7 @@ fun TutorialScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(SkyTopTint, CreamBackground)))
+            .background(theme.bg)
             .safeDrawingPadding()
             .testTag("tutorial_screen"),
         contentAlignment = Alignment.TopCenter
@@ -244,7 +238,7 @@ fun TutorialScreen(
                     Text(
                         text = stringResource(R.string.tutorial_title),
                         style = MaterialTheme.typography.headlineMedium,
-                        color = InkDark
+                        color = theme.text
                     )
                 }
 
@@ -255,7 +249,7 @@ fun TutorialScreen(
                     Text(
                         text = stringResource(R.string.tutorial_skip),
                         style = MaterialTheme.typography.titleMedium,
-                        color = CobaltPrimary,
+                        color = theme.accessibleAccentOn(theme.blue, theme.bg),
                         fontWeight = FontWeight.Bold
                     )
                 }
@@ -269,8 +263,8 @@ fun TutorialScreen(
                     .fillMaxWidth()
                     .height(8.dp)
                     .clip(RoundedCornerShape(999.dp)),
-                color = lesson.accent,
-                trackColor = OutlineSoft
+                color = lessonAccent,
+                trackColor = theme.timerTrack
             )
 
             Spacer(Modifier.height(14.dp))
@@ -280,10 +274,16 @@ fun TutorialScreen(
                 transitionSpec = { fadeIn() togetherWith fadeOut() },
                 label = "tutorialLessonCard"
             ) { activeLesson ->
+                val activeAccent = activeLesson.accentColor(theme)
+                val badgeTextAccent = theme.accessibleAccentOn(activeAccent, theme.surface)
+                val promptBg = lerp(theme.surface, activeAccent, if (theme.isDarkSurface) 0.16f else 0.09f)
+                val doneAccent = theme.accessibleAccentOn(theme.green, promptBg)
+                val promptLabelAccent = theme.accessibleAccentOn(activeAccent, promptBg)
+
                 CartoonCard(
                     modifier = Modifier.fillMaxWidth(),
-                    borderColor = activeLesson.accent,
-                    cornerRadius = 28.dp
+                    borderColor = activeAccent.copy(alpha = 0.55f),
+                    cornerRadius = 26.dp
                 ) {
                     Column(
                         modifier = Modifier.fillMaxWidth(),
@@ -292,14 +292,14 @@ fun TutorialScreen(
                         Text(
                             text = activeLesson.badge,
                             style = MaterialTheme.typography.labelMedium,
-                            color = activeLesson.accent,
+                            color = badgeTextAccent,
                             fontWeight = FontWeight.ExtraBold
                         )
                         Spacer(Modifier.height(2.dp))
                         Text(
                             text = activeLesson.title,
                             style = MaterialTheme.typography.headlineSmall,
-                            color = InkDark,
+                            color = theme.surfaceText,
                             textAlign = TextAlign.Center
                         )
 
@@ -308,6 +308,7 @@ fun TutorialScreen(
                         // Interactive Mini-Board / Track Playground
                         InteractiveLessonStage(
                             lesson = activeLesson,
+                            lessonAccent = activeAccent,
                             subStage = subStage,
                             onBoardTapped = {
                                 when (activeLesson) {
@@ -336,7 +337,7 @@ fun TutorialScreen(
                                         if (subStage == 0) {
                                             subStage = 1
                                             lessonDone = true
-                                            feedbackText = "Safe! Red & Green share the golden Star peacefully."
+                                            feedbackText = "Safe! Red & Green share the Star peacefully."
                                         }
                                     }
                                     else -> Unit
@@ -361,7 +362,7 @@ fun TutorialScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(18.dp))
-                                .background(activeLesson.accent.copy(alpha = 0.09f))
+                                .background(promptBg)
                                 .padding(horizontal = 12.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -445,14 +446,14 @@ fun TutorialScreen(
                                         Icon(
                                             imageVector = Icons.Filled.CheckCircle,
                                             contentDescription = null,
-                                            tint = MintGreenDark,
+                                            tint = doneAccent,
                                             modifier = Modifier.size(18.dp)
                                         )
                                     }
                                     Text(
                                         text = if (lessonDone) "Completed!" else "Try It Live",
                                         style = MaterialTheme.typography.labelMedium,
-                                        color = if (lessonDone) MintGreenDark else activeLesson.accent,
+                                        color = if (lessonDone) doneAccent else promptLabelAccent,
                                         fontWeight = FontWeight.ExtraBold
                                     )
                                 }
@@ -460,7 +461,7 @@ fun TutorialScreen(
                                 Text(
                                     text = feedbackText,
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = InkDark,
+                                    color = theme.surfaceText,
                                     fontWeight = FontWeight.SemiBold
                                 )
                             }
@@ -471,13 +472,13 @@ fun TutorialScreen(
                         Surface(
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(14.dp),
-                            color = Color(0xFFF8F9FC),
-                            border = BorderStroke(1.dp, OutlineSoft)
+                            color = theme.surfaceVariant,
+                            border = BorderStroke(1.dp, theme.chipLine)
                         ) {
                             Text(
                                 text = activeLesson.ruleSummary,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = InkMuted,
+                                color = theme.surfaceMutedText,
                                 modifier = Modifier.padding(12.dp)
                             )
                         }
@@ -497,9 +498,9 @@ fun TutorialScreen(
                         onClick = { stepIndex -= 1 },
                         tag = "tutorial_prev_button",
                         icon = Icons.AutoMirrored.Filled.ArrowBack,
-                        containerColor = Color.White,
-                        lipColor = OutlineSoft,
-                        contentColor = InkDark,
+                        containerColor = theme.surface,
+                        lipColor = theme.chipLine,
+                        contentColor = theme.surfaceText,
                         minHeight = 54.dp,
                         modifier = Modifier.weight(1f)
                     )
@@ -511,8 +512,7 @@ fun TutorialScreen(
                         onClick = onPlayNowClick,
                         tag = "tutorial_play_now_button",
                         icon = Icons.Filled.PlayArrow,
-                        containerColor = MintGreen,
-                        lipColor = MintGreenDark,
+                        containerColor = theme.green,
                         minHeight = 54.dp,
                         modifier = Modifier.weight(1.4f)
                     )
@@ -522,8 +522,8 @@ fun TutorialScreen(
                         onClick = { stepIndex += 1 },
                         tag = "tutorial_next_button",
                         icon = Icons.AutoMirrored.Filled.ArrowForward,
-                        containerColor = if (lessonDone) MintGreen else CobaltPrimary,
-                        lipColor = if (lessonDone) MintGreenDark else CobaltDark,
+                        containerColor = if (lessonDone) theme.green else theme.primaryActionBg,
+                        contentColor = if (lessonDone) theme.contrastingTextOn(theme.green) else theme.onPrimaryAction,
                         minHeight = 54.dp,
                         modifier = Modifier.weight(1.4f)
                     )
@@ -544,12 +544,14 @@ fun TutorialScreen(
 @Composable
 private fun InteractiveLessonStage(
     lesson: TutorialLesson,
+    lessonAccent: Color,
     subStage: Int,
     onBoardTapped: () -> Unit
 ) {
-    val redPalette = PlayerColor.RED.palette()
-    val bluePalette = PlayerColor.BLUE.palette()
-    val greenPalette = PlayerColor.GREEN.palette()
+    val theme = LocalLudoTheme.current
+    val redPalette = PlayerColor.RED.palette(theme)
+    val bluePalette = PlayerColor.BLUE.palette(theme)
+    val greenPalette = PlayerColor.GREEN.palette(theme)
 
     val isBoardActionReady = when (lesson) {
         TutorialLesson.GET_OUT_WITH_SIX -> subStage == 1
@@ -573,6 +575,10 @@ private fun InteractiveLessonStage(
         label = "tutorialTokenSlide"
     )
 
+    val stageBg = theme.board
+    val stageIconAccent = theme.accessibleAccentOn(lessonAccent, stageBg)
+    val stageDoneAccent = theme.accessibleAccentOn(theme.green, stageBg)
+
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -581,10 +587,10 @@ private fun InteractiveLessonStage(
             .clickable(enabled = isBoardActionReady, onClick = onBoardTapped)
             .testTag("tutorial_interactive_stage"),
         shape = RoundedCornerShape(20.dp),
-        color = Color(0xFFFFFCF5),
+        color = stageBg,
         border = BorderStroke(
-            width = if (isBoardActionReady) 2.5.dp else 1.5.dp,
-            color = if (isBoardActionReady) lesson.accent else OutlineSoft
+            width = if (isBoardActionReady) 2.5.dp else 1.dp,
+            color = if (isBoardActionReady) lessonAccent else theme.gridLine
         )
     ) {
         when (lesson) {
@@ -602,16 +608,17 @@ private fun InteractiveLessonStage(
                         for (i in 1..3) {
                             val active = subStage >= i
                             val cancelled = subStage >= 3 && i == 3
+                            val tileBg = when {
+                                cancelled -> theme.red
+                                active -> theme.yellow
+                                else -> theme.cell
+                            }
                             Surface(
                                 shape = RoundedCornerShape(16.dp),
-                                color = when {
-                                    cancelled -> CoralPink
-                                    active -> SunnyGold
-                                    else -> Color(0xFFEEECE6)
-                                },
+                                color = tileBg,
                                 border = BorderStroke(
-                                    2.dp,
-                                    if (active) InkDark.copy(alpha = 0.2f) else OutlineSoft
+                                    width = 1.5.dp,
+                                    color = if (active) tileBg else theme.gridLine
                                 ),
                                 modifier = Modifier.size(64.dp)
                             ) {
@@ -620,14 +627,14 @@ private fun InteractiveLessonStage(
                                         Icon(
                                             imageVector = Icons.Filled.Warning,
                                             contentDescription = "Turn cancelled",
-                                            tint = Color.White,
+                                            tint = theme.contrastingTextOn(theme.red),
                                             modifier = Modifier.size(30.dp)
                                         )
                                     } else {
                                         Text(
                                             text = if (active) "6" else "?",
                                             style = MaterialTheme.typography.headlineMedium,
-                                            color = if (active) InkDark else InkMuted,
+                                            color = if (active) theme.contrastingTextOn(theme.yellow) else theme.surfaceMutedText,
                                             fontWeight = FontWeight.ExtraBold
                                         )
                                     }
@@ -639,13 +646,13 @@ private fun InteractiveLessonStage(
                             modifier = Modifier
                                 .size(64.dp)
                                 .clip(CircleShape)
-                                .background(lesson.accent.copy(alpha = 0.14f)),
+                                .background(lessonAccent.copy(alpha = 0.16f)),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = if (lesson == TutorialLesson.EXTRA_ROLL) Icons.Filled.Star else Icons.Filled.Casino,
                                 contentDescription = null,
-                                tint = lesson.accent,
+                                tint = stageIconAccent,
                                 modifier = Modifier.size(36.dp)
                             )
                         }
@@ -657,7 +664,7 @@ private fun InteractiveLessonStage(
                                     else -> "TAP THE DIE BELOW"
                                 },
                                 style = MaterialTheme.typography.titleLarge,
-                                color = if (subStage >= 1) MintGreenDark else InkDark,
+                                color = if (subStage >= 1) stageDoneAccent else theme.surfaceText,
                                 fontWeight = FontWeight.ExtraBold
                             )
                             Text(
@@ -667,7 +674,7 @@ private fun InteractiveLessonStage(
                                     else -> "Give the 3D die a tap!"
                                 },
                                 style = MaterialTheme.typography.bodySmall,
-                                color = InkMuted
+                                color = theme.surfaceMutedText
                             )
                         }
                     }
@@ -675,6 +682,7 @@ private fun InteractiveLessonStage(
             }
 
             else -> {
+                val starCellTint = lerp(theme.cell, theme.yellow, if (theme.isDarkSurface) 0.24f else 0.16f)
                 // 5-cell interactive mini-track canvas
                 Canvas(
                     modifier = Modifier
@@ -698,10 +706,10 @@ private fun InteractiveLessonStage(
                         val fill = when {
                             isBaseCell -> redPalette.light
                             isStartCell -> redPalette.primary
-                            isStarCell -> Color(0xFFFFF0B8)
-                            isHomeCell -> SunnyGold
-                            isHomeLane -> redPalette.light
-                            else -> Color.White
+                            isStarCell -> starCellTint
+                            isHomeCell -> theme.crownIcon.copy(alpha = 0.22f)
+                            isHomeLane -> redPalette.primary.copy(alpha = 0.24f)
+                            else -> theme.cell
                         }
                         drawRoundRect(
                             color = fill,
@@ -710,22 +718,21 @@ private fun InteractiveLessonStage(
                             cornerRadius = CornerRadius(14f, 14f)
                         )
                         drawRoundRect(
-                            color = if (isStartCell || isHomeCell) InkDark.copy(alpha = 0.25f) else OutlineSoft,
+                            color = theme.gridLine,
                             topLeft = Offset(left, topY),
                             size = Size(w, cellH),
                             cornerRadius = CornerRadius(14f, 14f),
-                            style = Stroke(width = 3f)
+                            style = Stroke(width = 2.5f)
                         )
 
                         val center = Offset(left + w / 2f, topY + cellH / 2f)
                         if (isStarCell || isStartCell) {
                             drawMiniStar(
                                 center = center,
-                                radius = cellH * 0.28f,
-                                color = if (isStartCell) Color.White else SafeStarGold
+                                radius = cellH * 0.27f,
+                                color = if (isStartCell) Color.White else theme.starIcon
                             )
                         } else if (isHomeCell) {
-                            // Mini center triangle
                             val tri = Path().apply {
                                 moveTo(center.x, center.y - cellH * 0.26f)
                                 lineTo(center.x + cellH * 0.26f, center.y + cellH * 0.22f)
@@ -741,11 +748,11 @@ private fun InteractiveLessonStage(
                     // Opponent token for Capture or Safe Star lessons
                     if (lesson == TutorialLesson.CAPTURE_OPPONENT && subStage == 0) {
                         val oppCenter = Offset(3 * cellW + cellW / 2f, topY + cellH / 2f)
-                        drawMiniPawn(oppCenter, tokenR, bluePalette.primary, bluePalette.dark, glowing = false)
+                        drawMiniPawn(oppCenter, tokenR, bluePalette.primary, theme.tokenEdge, theme.blue, glowing = false)
                     } else if (lesson == TutorialLesson.SAFE_STARS) {
                         val shiftX = if (subStage >= 1) cellW * 0.16f else 0f
                         val oppCenter = Offset(2 * cellW + cellW / 2f + shiftX, topY + cellH / 2f)
-                        drawMiniPawn(oppCenter, tokenR * 0.9f, greenPalette.primary, greenPalette.dark, glowing = false)
+                        drawMiniPawn(oppCenter, tokenR * 0.9f, greenPalette.primary, theme.tokenEdge, theme.green, glowing = false)
                     }
 
                     // Player's Red token (animated slide)
@@ -755,7 +762,8 @@ private fun InteractiveLessonStage(
                         center = redCenter,
                         radius = if (lesson == TutorialLesson.SAFE_STARS && subStage >= 1) tokenR * 0.9f else tokenR,
                         fill = redPalette.primary,
-                        rim = redPalette.dark,
+                        edge = theme.tokenEdge,
+                        ringColor = redPalette.primary,
                         glowing = isBoardActionReady
                     )
                 }
@@ -768,24 +776,30 @@ private fun DrawScope.drawMiniPawn(
     center: Offset,
     radius: Float,
     fill: Color,
-    rim: Color,
+    edge: Color,
+    ringColor: Color,
     glowing: Boolean
 ) {
     if (glowing) {
         drawCircle(
-            color = SunnyGold.copy(alpha = 0.55f),
-            radius = radius * 1.38f,
+            color = ringColor.copy(alpha = 0.26f),
+            radius = radius * 1.48f,
             center = center
         )
+        drawCircle(
+            color = ringColor,
+            radius = radius * 1.48f,
+            center = center,
+            style = Stroke(width = 3.5f)
+        )
     }
-    drawCircle(color = Color.Black.copy(alpha = 0.16f), radius = radius, center = Offset(center.x, center.y + 4f))
-    drawCircle(color = Color.White, radius = radius, center = center)
-    drawCircle(color = fill, radius = radius * 0.84f, center = center)
-    drawCircle(color = rim, radius = radius * 0.84f, center = center, style = Stroke(width = 3f))
+    drawCircle(color = Color.Black.copy(alpha = 0.18f), radius = radius, center = Offset(center.x, center.y + 3f))
+    drawCircle(color = fill, radius = radius, center = center)
+    drawCircle(color = edge, radius = radius, center = center, style = Stroke(width = 4.5f))
     drawCircle(
-        color = Color.White.copy(alpha = 0.55f),
-        radius = radius * 0.25f,
-        center = Offset(center.x - radius * 0.24f, center.y - radius * 0.24f)
+        color = Color.White.copy(alpha = 0.52f),
+        radius = radius * 0.42f,
+        center = center
     )
 }
 
@@ -800,5 +814,9 @@ private fun DrawScope.drawMiniStar(center: Offset, radius: Float, color: Color) 
         if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
     }
     path.close()
-    drawPath(path, color = color)
+    drawPath(
+        path = path,
+        color = color,
+        style = Stroke(width = 3f, join = StrokeJoin.Round)
+    )
 }

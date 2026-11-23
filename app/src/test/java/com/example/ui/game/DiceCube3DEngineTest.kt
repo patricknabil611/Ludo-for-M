@@ -69,11 +69,18 @@ class DiceCube3DEngineTest {
         assertEquals(3, nonSix.state.lastDiceValue)
         assertEquals(TurnPhase.NO_LEGAL_MOVES, nonSix.state.phase)
 
-        // Rolling a 6 unlocks all 4 base tokens to enter start square
+        // Rolling a 6 stacks into the roll tray and prompts an immediate bonus roll
         val rolledSix = engine.applyDiceRoll(initial, 6)
-        assertTrue(rolledSix is RollOutcome.MultipleLegalMoves)
+        assertTrue(rolledSix is RollOutcome.RollAgainStacked)
         assertEquals(6, rolledSix.state.lastDiceValue)
-        assertEquals(TurnPhase.AWAITING_MOVE, rolledSix.state.phase)
-        assertEquals(4, rolledSix.state.legalMoves.size)
+        assertEquals(listOf(6), rolledSix.state.rolledDice)
+        assertEquals(TurnPhase.AWAITING_ROLL, rolledSix.state.phase)
+
+        // Following non-6 ends the stack and unlocks all 4 base tokens to enter start square via the 6
+        val rolledFollowUp = engine.applyDiceRoll(rolledSix.state, 2)
+        assertTrue(rolledFollowUp is RollOutcome.MultipleLegalMoves)
+        assertEquals(listOf(6, 2), rolledFollowUp.state.rolledDice)
+        assertEquals(TurnPhase.AWAITING_MOVE, rolledFollowUp.state.phase)
+        assertEquals(4, rolledFollowUp.state.legalMoves.size)
     }
 }

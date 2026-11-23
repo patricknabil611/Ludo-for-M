@@ -26,7 +26,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
@@ -57,8 +56,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -78,18 +77,9 @@ import com.example.ui.components.PlayerAvatarBadge
 import com.example.ui.online.ModeAggregateStats
 import com.example.ui.online.OnlineAuthUiState
 import com.example.ui.online.StatsHistoryUiState
-import com.example.ui.theme.CobaltDark
-import com.example.ui.theme.CobaltPrimary
-import com.example.ui.theme.CoralPink
-import com.example.ui.theme.CreamBackground
-import com.example.ui.theme.InkDark
-import com.example.ui.theme.InkMuted
-import com.example.ui.theme.MintGreen
-import com.example.ui.theme.MintGreenDark
-import com.example.ui.theme.OutlineSoft
-import com.example.ui.theme.SkyTopTint
-import com.example.ui.theme.SunnyGold
-import com.example.ui.theme.SunnyGoldDark
+import com.example.ui.theme.LocalLudoTheme
+import com.example.ui.theme.ludoShadow
+import com.example.ui.theme.modeAccentColor
 import com.example.ui.theme.palette
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -112,6 +102,9 @@ fun StatsHistoryScreen(
     onUpgradeOrSignInClick: () -> Unit,
     onBackClick: () -> Unit
 ) {
+    val theme = LocalLudoTheme.current
+    val magicAccent = modeAccentColor(GameModeId.MAGIC, theme)
+
     var showEditNicknameDialog by remember { mutableStateOf(false) }
     var showAvatarStudioDialog by remember { mutableStateOf(false) }
     var nicknameDraft by remember(authState.effectiveNickname) {
@@ -149,7 +142,7 @@ fun StatsHistoryScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(SkyTopTint, CreamBackground)))
+            .background(theme.bg)
             .safeDrawingPadding()
             .testTag("stats_history_screen"),
         contentAlignment = Alignment.TopCenter
@@ -176,7 +169,7 @@ fun StatsHistoryScreen(
                     Text(
                         text = stringResource(R.string.stats_screen_title),
                         style = MaterialTheme.typography.headlineMedium,
-                        color = InkDark
+                        color = theme.text
                     )
                 }
             }
@@ -184,15 +177,16 @@ fun StatsHistoryScreen(
             // Friendly sync warning if offline
             if (!historyState.errorMessage.isNullOrBlank()) {
                 item(key = "sync_warning") {
+                    val warnBg = lerp(theme.surface, theme.yellow, if (theme.isDarkSurface) 0.22f else 0.16f)
                     Surface(
                         shape = RoundedCornerShape(16.dp),
-                        color = SunnyGold.copy(alpha = 0.22f),
-                        border = BorderStroke(1.5.dp, SunnyGoldDark)
+                        color = warnBg,
+                        border = BorderStroke(1.5.dp, theme.yellow)
                     ) {
                         Text(
                             text = historyState.errorMessage,
                             style = MaterialTheme.typography.bodySmall,
-                            color = InkDark,
+                            color = theme.surfaceText,
                             modifier = Modifier.padding(12.dp)
                         )
                     }
@@ -203,8 +197,8 @@ fun StatsHistoryScreen(
             item(key = "profile_header") {
                 CartoonCard(
                     modifier = Modifier.fillMaxWidth(),
-                    borderColor = CobaltPrimary,
-                    cornerRadius = 26.dp
+                    borderColor = theme.blue.copy(alpha = 0.55f),
+                    cornerRadius = 24.dp
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -236,7 +230,7 @@ fun StatsHistoryScreen(
                                 Text(
                                     text = authState.effectiveNickname,
                                     style = MaterialTheme.typography.titleLarge,
-                                    color = InkDark,
+                                    color = theme.surfaceText,
                                     fontWeight = FontWeight.ExtraBold,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -248,7 +242,7 @@ fun StatsHistoryScreen(
                                         "Guest Profile • Local Stats"
                                     },
                                     style = MaterialTheme.typography.labelMedium,
-                                    color = InkMuted
+                                    color = theme.surfaceMutedText
                                 )
                             }
                         }
@@ -271,9 +265,7 @@ fun StatsHistoryScreen(
                         onClick = { showAvatarStudioDialog = true },
                         tag = "customize_avatar_button",
                         icon = Icons.Filled.AutoAwesome,
-                        containerColor = SunnyGold,
-                        lipColor = SunnyGoldDark,
-                        contentColor = InkDark,
+                        containerColor = theme.yellow,
                         minHeight = 48.dp,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -285,8 +277,8 @@ fun StatsHistoryScreen(
                             onClick = onUpgradeOrSignInClick,
                             tag = "stats_upgrade_google_button",
                             icon = Icons.Filled.Upgrade,
-                            containerColor = CobaltPrimary,
-                            lipColor = CobaltDark,
+                            containerColor = theme.primaryActionBg,
+                            contentColor = theme.onPrimaryAction,
                             minHeight = 48.dp,
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -328,19 +320,19 @@ fun StatsHistoryScreen(
                         StatTile(
                             label = "Games Played",
                             value = activeStats.gamesPlayed.toString(),
-                            accent = CobaltPrimary,
+                            accent = theme.blue,
                             modifier = Modifier.weight(1f)
                         )
                         StatTile(
                             label = "Wins",
                             value = activeStats.wins.toString(),
-                            accent = SunnyGoldDark,
+                            accent = theme.yellow,
                             modifier = Modifier.weight(1f)
                         )
                         StatTile(
                             label = "Win Rate",
                             value = "${activeStats.winRatePercent}%",
-                            accent = MintGreenDark,
+                            accent = theme.green,
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -352,13 +344,13 @@ fun StatsHistoryScreen(
                         StatTile(
                             label = "Captures Made",
                             value = activeStats.capturesMade.toString(),
-                            accent = CoralPink,
+                            accent = theme.red,
                             modifier = Modifier.weight(1f)
                         )
                         StatTile(
                             label = "Tokens Home",
                             value = activeStats.tokensHome.toString(),
-                            accent = Color(0xFF8338EC),
+                            accent = magicAccent,
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -375,7 +367,7 @@ fun StatsHistoryScreen(
                                 sublabel = overview.favoriteMode?.let { m ->
                                     "${overview.byMode[m]?.gamesPlayed ?: 0} games"
                                 } ?: "Play to unlock",
-                                accent = CoralPink,
+                                accent = theme.red,
                                 modifier = Modifier.weight(1f)
                             )
                             HighlightModeTile(
@@ -385,15 +377,15 @@ fun StatsHistoryScreen(
                                 sublabel = overview.bestWinRateMode?.let { (_, pct) ->
                                     "$pct% wins"
                                 } ?: "Play to unlock",
-                                accent = SunnyGoldDark,
+                                accent = theme.yellow,
                                 modifier = Modifier.weight(1f)
                             )
                         }
-                    } else if (selectedModeFilter == GameModeId.POWER_UP || activeStats.powerUpsUsed > 0) {
+                    } else if (selectedModeFilter == GameModeId.MAGIC || activeStats.powerUpsUsed > 0) {
                         StatTile(
-                            label = "Power-Ups Used",
+                            label = "Magic Items Used",
                             value = activeStats.powerUpsUsed.toString(),
-                            accent = Color(0xFF8338EC),
+                            accent = magicAccent,
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
@@ -416,7 +408,7 @@ fun StatsHistoryScreen(
                         Icon(
                             imageVector = Icons.Filled.History,
                             contentDescription = null,
-                            tint = CobaltPrimary,
+                            tint = theme.accessibleAccentOn(theme.blue, theme.bg),
                             modifier = Modifier.size(22.dp)
                         )
                         Text(
@@ -426,14 +418,14 @@ fun StatsHistoryScreen(
                                 "${selectedModeFilter!!.title} History"
                             },
                             style = MaterialTheme.typography.titleLarge,
-                            color = InkDark
+                            color = theme.text
                         )
                     }
                     if (filteredHistory.isNotEmpty()) {
                         Text(
                             text = "Tap for details",
                             style = MaterialTheme.typography.labelSmall,
-                            color = InkMuted
+                            color = theme.mutedText
                         )
                     }
                 }
@@ -447,14 +439,13 @@ fun StatsHistoryScreen(
                             .padding(vertical = 24.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        CircularProgressIndicator(color = CobaltPrimary)
+                        CircularProgressIndicator(color = theme.blue)
                     }
                 }
             } else if (filteredHistory.isEmpty()) {
                 item(key = "empty") {
                     CartoonCard(
-                        modifier = Modifier.fillMaxWidth(),
-                        borderColor = OutlineSoft
+                        modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
                             text = if (selectedModeFilter == null) {
@@ -463,7 +454,7 @@ fun StatsHistoryScreen(
                                 "No completed ${selectedModeFilter!!.title} matches yet. Play one to track stats here!"
                             },
                             style = MaterialTheme.typography.bodyMedium,
-                            color = InkMuted
+                            color = theme.surfaceMutedText
                         )
                     }
                 }
@@ -483,6 +474,9 @@ fun StatsHistoryScreen(
     if (showEditNicknameDialog) {
         AlertDialog(
             onDismissRequest = { showEditNicknameDialog = false },
+            containerColor = theme.surface,
+            titleContentColor = theme.surfaceText,
+            textContentColor = theme.surfaceMutedText,
             title = { Text(stringResource(R.string.stats_edit_nickname_title)) },
             text = {
                 OutlinedTextField(
@@ -503,12 +497,19 @@ fun StatsHistoryScreen(
                         showEditNicknameDialog = false
                     }
                 ) {
-                    Text("Save")
+                    Text(
+                        text = "Save",
+                        color = theme.accessibleAccentOn(theme.blue, theme.surface),
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showEditNicknameDialog = false }) {
-                    Text("Cancel")
+                    Text(
+                        text = "Cancel",
+                        color = theme.surfaceMutedText
+                    )
                 }
             }
         )
@@ -541,16 +542,21 @@ private fun ModeFilterChip(
     selected: Boolean,
     onClick: () -> Unit
 ) {
+    val theme = LocalLudoTheme.current
     Surface(
         onClick = onClick,
+        modifier = Modifier.ludoShadow(theme.cardShadow, 999.dp),
         shape = RoundedCornerShape(999.dp),
-        color = if (selected) CobaltPrimary else Color.White,
-        border = BorderStroke(1.5.dp, if (selected) CobaltDark else OutlineSoft)
+        color = if (selected) theme.primaryActionBg else theme.surface,
+        border = BorderStroke(
+            width = if (selected) 1.5.dp else 1.dp,
+            color = if (selected) theme.primaryActionBg else theme.chipLine
+        )
     ) {
         Text(
             text = label,
             style = MaterialTheme.typography.labelLarge,
-            color = if (selected) Color.White else InkDark,
+            color = if (selected) theme.onPrimaryAction else theme.surfaceText,
             fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp)
         )
@@ -564,16 +570,19 @@ private fun StatTile(
     accent: Color,
     modifier: Modifier = Modifier
 ) {
+    val theme = LocalLudoTheme.current
+    val accessibleAccent = theme.accessibleAccentOn(accent, theme.surface)
+
     CartoonCard(
         modifier = modifier,
-        borderColor = accent.copy(alpha = 0.45f),
-        cornerRadius = 20.dp,
+        borderColor = accent.copy(alpha = 0.40f),
+        cornerRadius = 18.dp,
         contentPadding = PaddingValues(12.dp)
     ) {
         Text(
             text = value,
             style = MaterialTheme.typography.headlineSmall,
-            color = accent,
+            color = accessibleAccent,
             fontWeight = FontWeight.ExtraBold,
             maxLines = 1
         )
@@ -581,7 +590,7 @@ private fun StatTile(
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
-            color = InkMuted,
+            color = theme.surfaceMutedText,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
@@ -597,10 +606,13 @@ private fun HighlightModeTile(
     accent: Color,
     modifier: Modifier = Modifier
 ) {
+    val theme = LocalLudoTheme.current
+    val accessibleAccent = theme.accessibleAccentOn(accent, theme.surface)
+
     CartoonCard(
         modifier = modifier,
-        borderColor = accent.copy(alpha = 0.45f),
-        cornerRadius = 20.dp,
+        borderColor = accent.copy(alpha = 0.40f),
+        cornerRadius = 18.dp,
         contentPadding = PaddingValues(12.dp)
     ) {
         Row(
@@ -610,13 +622,13 @@ private fun HighlightModeTile(
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = accent,
+                tint = accessibleAccent,
                 modifier = Modifier.size(16.dp)
             )
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelSmall,
-                color = InkMuted,
+                color = theme.surfaceMutedText,
                 maxLines = 1
             )
         }
@@ -624,7 +636,7 @@ private fun HighlightModeTile(
         Text(
             text = value,
             style = MaterialTheme.typography.titleMedium,
-            color = InkDark,
+            color = theme.surfaceText,
             fontWeight = FontWeight.ExtraBold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
@@ -632,7 +644,7 @@ private fun HighlightModeTile(
         Text(
             text = sublabel,
             style = MaterialTheme.typography.labelSmall,
-            color = accent,
+            color = accessibleAccent,
             fontWeight = FontWeight.Bold
         )
     }
@@ -643,21 +655,30 @@ private fun MatchHistoryRowCard(
     entry: MatchHistoryEntry,
     onClick: () -> Unit
 ) {
-    val winnerPalette = entry.winnerColor.palette()
+    val theme = LocalLudoTheme.current
+    val winnerPalette = entry.winnerColor.palette(theme)
+    val magicAccent = modeAccentColor(GameModeId.MAGIC, theme)
     val dateLabel = remember(entry.playedAtMs) {
         if (entry.playedAtMs <= 0L) ""
         else SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date(entry.playedAtMs))
     }
 
+    val typeTint = if (entry.onlineMatch) theme.blue else theme.yellow
+    val typeBg = lerp(theme.surface, typeTint, if (theme.isDarkSurface) 0.22f else 0.14f)
+
     Surface(
         modifier = Modifier
             .fillMaxWidth()
+            .ludoShadow(theme.cardShadow, 20.dp)
             .clip(RoundedCornerShape(20.dp))
             .clickable(onClick = onClick)
             .testTag("match_history_row_${entry.id}"),
         shape = RoundedCornerShape(20.dp),
-        color = Color.White,
-        border = BorderStroke(1.5.dp, if (entry.won) MintGreenDark.copy(alpha = 0.6f) else OutlineSoft)
+        color = theme.surface,
+        border = BorderStroke(
+            width = if (entry.won) 1.5.dp else 1.dp,
+            color = if (entry.won) theme.green.copy(alpha = 0.60f) else theme.chipLine
+        )
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             Row(
@@ -671,7 +692,7 @@ private fun MatchHistoryRowCard(
                 ) {
                     Surface(
                         shape = RoundedCornerShape(10.dp),
-                        color = if (entry.onlineMatch) CobaltPrimary.copy(alpha = 0.14f) else SunnyGold.copy(alpha = 0.25f)
+                        color = typeBg
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -681,13 +702,13 @@ private fun MatchHistoryRowCard(
                             Icon(
                                 imageVector = if (entry.onlineMatch) Icons.Filled.Public else Icons.Filled.Person,
                                 contentDescription = null,
-                                tint = if (entry.onlineMatch) CobaltPrimary else SunnyGoldDark,
+                                tint = theme.accessibleAccentOn(typeTint, typeBg),
                                 modifier = Modifier.size(14.dp)
                             )
                             Text(
                                 text = if (entry.onlineMatch) "Online" else "Local",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = InkDark,
+                                color = theme.surfaceText,
                                 fontWeight = FontWeight.Bold
                             )
                         }
@@ -696,7 +717,7 @@ private fun MatchHistoryRowCard(
                     Text(
                         text = entry.mode.title,
                         style = MaterialTheme.typography.titleSmall,
-                        color = InkDark,
+                        color = theme.surfaceText,
                         fontWeight = FontWeight.Bold
                     )
                 }
@@ -706,14 +727,15 @@ private fun MatchHistoryRowCard(
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     if (entry.rank > 0) {
+                        val badgeBg = if (entry.won) theme.green else theme.surfaceVariant
                         Surface(
                             shape = RoundedCornerShape(999.dp),
-                            color = if (entry.won) MintGreen else OutlineSoft
+                            color = badgeBg
                         ) {
                             Text(
                                 text = if (entry.won) "1st • Win" else "#${entry.rank} Place",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = if (entry.won) Color.White else InkDark,
+                                color = if (entry.won) theme.contrastingTextOn(theme.green) else theme.surfaceText,
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                             )
@@ -722,7 +744,7 @@ private fun MatchHistoryRowCard(
                     Icon(
                         imageVector = Icons.Filled.ChevronRight,
                         contentDescription = "View match details",
-                        tint = InkMuted,
+                        tint = theme.surfaceMutedText,
                         modifier = Modifier.size(18.dp)
                     )
                 }
@@ -737,13 +759,13 @@ private fun MatchHistoryRowCard(
                 Icon(
                     imageVector = Icons.Filled.EmojiEvents,
                     contentDescription = null,
-                    tint = winnerPalette.primary,
+                    tint = theme.accessibleAccentOn(winnerPalette.primary, theme.surface),
                     modifier = Modifier.size(18.dp)
                 )
                 Text(
                     text = "Winner: ${entry.winnerName}",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = InkDark,
+                    color = theme.surfaceText,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -755,7 +777,7 @@ private fun MatchHistoryRowCard(
                 Text(
                     text = entry.playerSummary,
                     style = MaterialTheme.typography.bodySmall,
-                    color = InkMuted,
+                    color = theme.surfaceMutedText,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -772,18 +794,18 @@ private fun MatchHistoryRowCard(
                 MiniStatPill(
                     icon = Icons.Filled.Whatshot,
                     text = "${entry.capturesMade} captures",
-                    tint = CoralPink
+                    tint = theme.red
                 )
                 MiniStatPill(
                     icon = Icons.Filled.Home,
                     text = "${entry.tokensHome}/4 home",
-                    tint = MintGreenDark
+                    tint = theme.green
                 )
-                if (entry.mode == GameModeId.POWER_UP || entry.powerUpsUsed > 0) {
+                if (entry.mode == GameModeId.MAGIC || entry.powerUpsUsed > 0) {
                     MiniStatPill(
                         icon = Icons.Filled.AutoAwesome,
-                        text = "${entry.powerUpsUsed} power-ups",
-                        tint = Color(0xFF8338EC)
+                        text = "${entry.powerUpsUsed} magic",
+                        tint = magicAccent
                     )
                 }
             }
@@ -798,13 +820,13 @@ private fun MatchHistoryRowCard(
                     text = "${entry.turnsPlayed} turns" +
                         if (entry.roomCode.isNotBlank()) " • Room ${entry.roomCode}" else "",
                     style = MaterialTheme.typography.labelSmall,
-                    color = InkMuted
+                    color = theme.surfaceMutedText
                 )
                 if (dateLabel.isNotEmpty()) {
                     Text(
                         text = dateLabel,
                         style = MaterialTheme.typography.labelSmall,
-                        color = InkMuted
+                        color = theme.surfaceMutedText
                     )
                 }
             }
@@ -818,9 +840,13 @@ private fun MiniStatPill(
     text: String,
     tint: Color
 ) {
+    val theme = LocalLudoTheme.current
+    val pillBg = lerp(theme.surface, tint, if (theme.isDarkSurface) 0.20f else 0.10f)
+    val iconColor = theme.accessibleAccentOn(tint, pillBg)
+
     Surface(
         shape = RoundedCornerShape(999.dp),
-        color = tint.copy(alpha = 0.10f)
+        color = pillBg
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -830,13 +856,13 @@ private fun MiniStatPill(
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = tint,
+                tint = iconColor,
                 modifier = Modifier.size(12.dp)
             )
             Text(
                 text = text,
                 style = MaterialTheme.typography.labelSmall,
-                color = InkDark,
+                color = theme.surfaceText,
                 fontWeight = FontWeight.SemiBold
             )
         }
@@ -848,6 +874,7 @@ private fun MatchDetailDialog(
     entry: MatchHistoryEntry,
     onDismiss: () -> Unit
 ) {
+    val theme = LocalLudoTheme.current
     val fullDate = remember(entry.playedAtMs) {
         if (entry.playedAtMs <= 0L) "Unknown date"
         else SimpleDateFormat("EEE, MMM d yyyy • h:mm a", Locale.getDefault()).format(Date(entry.playedAtMs))
@@ -858,8 +885,8 @@ private fun MatchDetailDialog(
             modifier = Modifier
                 .fillMaxWidth()
                 .testTag("match_detail_dialog"),
-            borderColor = CobaltPrimary,
-            cornerRadius = 28.dp
+            borderColor = theme.blue.copy(alpha = 0.55f),
+            cornerRadius = 26.dp
         ) {
             Column(
                 modifier = Modifier
@@ -876,23 +903,25 @@ private fun MatchDetailDialog(
                         Text(
                             text = "${entry.mode.title} Match",
                             style = MaterialTheme.typography.headlineSmall,
-                            color = InkDark,
+                            color = theme.surfaceText,
                             fontWeight = FontWeight.ExtraBold
                         )
                         Text(
                             text = fullDate,
                             style = MaterialTheme.typography.labelSmall,
-                            color = InkMuted
+                            color = theme.surfaceMutedText
                         )
                     }
+                    val badgeBg = if (entry.onlineMatch) theme.primaryActionBg else theme.yellow
+                    val badgeFg = if (entry.onlineMatch) theme.onPrimaryAction else theme.contrastingTextOn(theme.yellow)
                     Surface(
                         shape = RoundedCornerShape(999.dp),
-                        color = if (entry.onlineMatch) CobaltPrimary else SunnyGold
+                        color = badgeBg
                     ) {
                         Text(
                             text = if (entry.onlineMatch) "Online" else "Local",
                             style = MaterialTheme.typography.labelSmall,
-                            color = if (entry.onlineMatch) Color.White else InkDark,
+                            color = badgeFg,
                             fontWeight = FontWeight.ExtraBold,
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                         )
@@ -902,8 +931,8 @@ private fun MatchDetailDialog(
                 // Quick Match Overview Strip
                 Surface(
                     shape = RoundedCornerShape(16.dp),
-                    color = Color(0xFFF5F8FF),
-                    border = BorderStroke(1.dp, OutlineSoft)
+                    color = theme.surfaceVariant,
+                    border = BorderStroke(1.dp, theme.chipLine)
                 ) {
                     Row(
                         modifier = Modifier
@@ -924,7 +953,7 @@ private fun MatchDetailDialog(
                 Text(
                     text = "Player Breakdown",
                     style = MaterialTheme.typography.titleMedium,
-                    color = InkDark,
+                    color = theme.surfaceText,
                     fontWeight = FontWeight.ExtraBold
                 )
 
@@ -932,12 +961,12 @@ private fun MatchDetailDialog(
                     Text(
                         text = entry.playerSummary.ifBlank { "Winner: ${entry.winnerName}" },
                         style = MaterialTheme.typography.bodyMedium,
-                        color = InkMuted
+                        color = theme.surfaceMutedText
                     )
                 } else {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         entry.playerDetails.forEach { p ->
-                            val pal = p.color.palette()
+                            val pal = p.color.palette(theme)
                             Surface(
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(16.dp),
@@ -966,7 +995,7 @@ private fun MatchDetailDialog(
                                             Text(
                                                 text = "#${p.rank}",
                                                 style = MaterialTheme.typography.labelSmall,
-                                                color = Color.White,
+                                                color = pal.onPrimary,
                                                 fontWeight = FontWeight.ExtraBold
                                             )
                                         }
@@ -978,7 +1007,7 @@ private fun MatchDetailDialog(
                                                 Text(
                                                     text = p.nickname,
                                                     style = MaterialTheme.typography.titleSmall,
-                                                    color = InkDark,
+                                                    color = theme.surfaceText,
                                                     fontWeight = FontWeight.Bold,
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis
@@ -987,15 +1016,15 @@ private fun MatchDetailDialog(
                                                     Icon(
                                                         imageVector = Icons.Filled.SmartToy,
                                                         contentDescription = "Bot",
-                                                        tint = InkMuted,
+                                                        tint = theme.surfaceMutedText,
                                                         modifier = Modifier.size(14.dp)
                                                     )
                                                 }
                                             }
                                             val statsLine = buildString {
                                                 append("${p.capturesMade} captures • ${p.tokensHome}/4 home")
-                                                if (entry.mode == GameModeId.POWER_UP || p.powerUpsUsed > 0) {
-                                                    append(" • ${p.powerUpsUsed} power-ups")
+                                                if (entry.mode == GameModeId.MAGIC || p.powerUpsUsed > 0) {
+                                                    append(" • ${p.powerUpsUsed} magic")
                                                 }
                                                 if (entry.mode == GameModeId.TIMED) {
                                                     append(" • ${p.score} pts")
@@ -1004,7 +1033,7 @@ private fun MatchDetailDialog(
                                             Text(
                                                 text = statsLine,
                                                 style = MaterialTheme.typography.labelSmall,
-                                                color = InkMuted
+                                                color = theme.surfaceMutedText
                                             )
                                         }
                                     }
@@ -1021,8 +1050,7 @@ private fun MatchDetailDialog(
                     onClick = onDismiss,
                     tag = "match_detail_close_button",
                     icon = Icons.Filled.Check,
-                    containerColor = MintGreen,
-                    lipColor = MintGreenDark,
+                    containerColor = theme.green,
                     modifier = Modifier.fillMaxWidth()
                 )
             }
@@ -1032,16 +1060,17 @@ private fun MatchDetailDialog(
 
 @Composable
 private fun DetailMetric(label: String, value: String) {
+    val theme = LocalLudoTheme.current
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
-            color = InkMuted
+            color = theme.surfaceMutedText
         )
         Text(
             text = value,
             style = MaterialTheme.typography.titleSmall,
-            color = InkDark,
+            color = theme.surfaceText,
             fontWeight = FontWeight.ExtraBold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis

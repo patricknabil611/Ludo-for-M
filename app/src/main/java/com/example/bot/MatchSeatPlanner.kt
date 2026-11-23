@@ -2,6 +2,7 @@ package com.example.bot
 
 import com.example.engine.BotDifficulty
 import com.example.engine.GameModeId
+import com.example.engine.MatchFormat
 import com.example.engine.PlayerColor
 import com.example.engine.PlayerControllerType
 import com.example.engine.PlayerSetup
@@ -22,22 +23,42 @@ data class SeatConfig(
 )
 
 /**
- * Resolves the 4 setup seats + chosen player count + mode constraints into valid [PlayerSetup] entries.
+ * Resolves the 4 setup seats + chosen [MatchFormat] into valid [PlayerSetup] entries:
+ * - 1v1: 2 players seated in OPPOSITE corners (e.g., Red & Yellow).
+ * - 4 Players: 4 players across all 4 corners.
+ * - 2v2 Team: 4 players with partners seated in OPPOSITE corners (Red+Yellow vs Green+Blue).
  */
 object MatchSeatPlanner {
+
+    fun buildMatchSetups(
+        seats: List<SeatConfig>,
+        matchFormat: MatchFormat,
+        @Suppress("UNUSED_PARAMETER") mode: GameModeId = GameModeId.CLASSIC
+    ): List<PlayerSetup> {
+        return buildMatchSetupsInternal(seats, matchFormat.playerCount, matchFormat.isTeamFormat)
+    }
 
     fun buildMatchSetups(
         seats: List<SeatConfig>,
         targetPlayerCount: Int,
         mode: GameModeId = GameModeId.CLASSIC
     ): List<PlayerSetup> {
+        val count = targetPlayerCount.coerceIn(mode.minPlayers, mode.maxPlayers)
+        return buildMatchSetupsInternal(seats, count, isTeam = false)
+    }
+
+    private fun buildMatchSetupsInternal(
+        seats: List<SeatConfig>,
+        desiredCount: Int,
+        isTeam: Boolean
+    ): List<PlayerSetup> {
         require(seats.size == 4) { "Expected 4 seats" }
-        val desiredCount = targetPlayerCount.coerceIn(mode.minPlayers, mode.maxPlayers)
+        val clampedCount = desiredCount.coerceIn(2, 4)
 
         val nonEmpty = seats.filter { it.occupancy != SeatOccupancy.EMPTY }.toMutableList()
         val emptySeats = seats.filter { it.occupancy == SeatOccupancy.EMPTY }.toMutableList()
 
-        val neededBots = (desiredCount - nonEmpty.size).coerceAtLeast(0)
+        val neededBots = (clampedCount - nonEmpty.size).coerceAtLeast(0)
         repeat(neededBots) {
             val slot = emptySeats.removeFirstOrNull() ?: return@repeat
             nonEmpty += slot.copy(
@@ -47,11 +68,11 @@ object MatchSeatPlanner {
             )
         }
 
-        val activeSeats = nonEmpty.take(desiredCount)
+        val activeSeats = nonEmpty.take(clampedCount)
 
         val finalColors = when {
-            mode == GameModeId.TEAMS_2V2 -> {
-                // Partners sit opposite: Red + Yellow vs Green + Blue
+            isTeam -> {
+                // Partners sit opposite: Red + Yellow (Team A) vs Green + Blue (Team B)
                 val used = mutableListOf<PlayerColor>()
                 activeSeats.map { seat ->
                     if (seat.color !in used) {
@@ -65,6 +86,7 @@ object MatchSeatPlanner {
                 }
             }
             activeSeats.size == 2 -> {
+                // 1v1 always sits in OPPOSITE corners
                 val c0 = activeSeats[0].color
                 listOf(c0, c0.opposite())
             }

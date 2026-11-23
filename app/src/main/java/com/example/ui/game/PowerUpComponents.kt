@@ -10,13 +10,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.LocalFireDepartment
+import androidx.compose.material.icons.filled.RocketLaunch
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -26,7 +29,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -38,28 +41,14 @@ import com.example.R
 import com.example.engine.PowerUpType
 import com.example.ui.components.CartoonButton
 import com.example.ui.components.CartoonCard
-import com.example.ui.theme.CoralPink
-import com.example.ui.theme.InkDark
-import com.example.ui.theme.InkMuted
-import com.example.ui.theme.MintGreen
-import com.example.ui.theme.MintGreenDark
-import com.example.ui.theme.SunnyGoldDark
-
-fun powerUpAccentColor(type: PowerUpType): Color = when (type) {
-    PowerUpType.SHIELD -> Color(0xFF00B4D8)
-    PowerUpType.DOUBLE_DICE -> Color(0xFFE09F00)
-    PowerUpType.BOMB_TRAP -> Color(0xFFE63946)
-}
-
-fun powerUpSoftBg(type: PowerUpType): Color = when (type) {
-    PowerUpType.SHIELD -> Color(0xFFE0F7FA)
-    PowerUpType.DOUBLE_DICE -> Color(0xFFFFF4D2)
-    PowerUpType.BOMB_TRAP -> Color(0xFFFFE5E8)
-}
+import com.example.ui.theme.LocalLudoTheme
+import com.example.ui.theme.powerUpAccentColor
+import com.example.ui.theme.powerUpSoftBg
 
 fun powerUpIcon(type: PowerUpType): ImageVector = when (type) {
+    PowerUpType.ROCKET -> Icons.Filled.RocketLaunch
+    PowerUpType.GOLDEN_DICE -> Icons.Filled.Casino
     PowerUpType.SHIELD -> Icons.Filled.Shield
-    PowerUpType.DOUBLE_DICE -> Icons.Filled.Casino
     PowerUpType.BOMB_TRAP -> Icons.Filled.LocalFireDepartment
 }
 
@@ -67,11 +56,13 @@ fun powerUpIcon(type: PowerUpType): ImageVector = when (type) {
 fun PowerUpActivationBanner(
     banner: PowerUpBannerState
 ) {
+    val theme = LocalLudoTheme.current
     val accent = when {
-        banner.isExplosion -> CoralPink
-        banner.type != null -> powerUpAccentColor(banner.type)
-        else -> Color(0xFF8338EC)
+        banner.isExplosion -> theme.red
+        banner.type != null -> powerUpAccentColor(banner.type, theme)
+        else -> lerp(theme.blue, theme.red, 0.50f)
     }
+    val readableAccent = theme.accessibleAccentOn(accent, theme.surface)
     val icon = when {
         banner.isExplosion -> Icons.Filled.LocalFireDepartment
         banner.type != null -> powerUpIcon(banner.type)
@@ -83,7 +74,7 @@ fun PowerUpActivationBanner(
             .fillMaxWidth(0.84f)
             .testTag("powerup_activation_banner"),
         borderColor = accent,
-        containerColor = Color.White,
+        containerColor = theme.surface,
         cornerRadius = 26.dp
     ) {
         Column(
@@ -100,7 +91,7 @@ fun PowerUpActivationBanner(
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    tint = accent,
+                    tint = readableAccent,
                     modifier = Modifier.size(32.dp)
                 )
             }
@@ -108,45 +99,47 @@ fun PowerUpActivationBanner(
             Text(
                 text = banner.eyebrow,
                 style = MaterialTheme.typography.labelMedium,
-                color = accent,
+                color = readableAccent,
                 fontWeight = FontWeight.ExtraBold
             )
             Text(
                 text = banner.title,
                 style = MaterialTheme.typography.headlineMedium,
-                color = InkDark,
+                color = theme.surfaceText,
                 textAlign = TextAlign.Center
             )
             Spacer(Modifier.height(2.dp))
             Text(
                 text = banner.detail,
                 style = MaterialTheme.typography.bodyMedium,
-                color = InkMuted,
+                color = theme.surfaceMutedText,
                 textAlign = TextAlign.Center
             )
         }
     }
 }
 
-/**
- * Short "How power-ups work" popup shown the first time a player opens Power-Up mode
- * (and re-openable via the help button on the game board).
- */
 @Composable
 fun PowerUpGuideDialog(
     onDismiss: () -> Unit
 ) {
+    val theme = LocalLudoTheme.current
+    val magicAccent = lerp(theme.blue, theme.red, 0.50f)
+    val readableMagic = theme.accessibleAccentOn(magicAccent, theme.surface)
+
     Dialog(onDismissRequest = onDismiss) {
         CartoonCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .testTag("powerup_guide_dialog"),
-            borderColor = Color(0xFF8338EC),
-            containerColor = Color.White,
+            borderColor = magicAccent,
+            containerColor = theme.surface,
             cornerRadius = 28.dp
         ) {
             Column(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
@@ -154,45 +147,50 @@ fun PowerUpGuideDialog(
                     modifier = Modifier
                         .size(48.dp)
                         .clip(CircleShape)
-                        .background(Color(0xFF8338EC).copy(alpha = 0.14f)),
+                        .background(magicAccent.copy(alpha = 0.14f)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Filled.AutoAwesome,
                         contentDescription = null,
-                        tint = Color(0xFF8338EC),
+                        tint = readableMagic,
                         modifier = Modifier.size(28.dp)
                     )
                 }
 
                 Text(
-                    text = stringResource(R.string.powerup_guide_title),
+                    text = "How Magic Items Work",
                     style = MaterialTheme.typography.headlineMedium,
-                    color = InkDark,
+                    color = theme.surfaceText,
                     textAlign = TextAlign.Center
                 )
 
                 Text(
-                    text = stringResource(R.string.powerup_guide_intro),
+                    text = "Magic items spawn on random non-safe squares (up to 3 on the board). Land on one to trigger it immediately!",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = InkMuted,
+                    color = theme.surfaceMutedText,
                     textAlign = TextAlign.Center
                 )
 
                 PowerUpGuideRow(
-                    type = PowerUpType.SHIELD,
-                    title = stringResource(R.string.powerup_shield_title),
-                    detail = stringResource(R.string.powerup_shield_desc)
+                    type = PowerUpType.ROCKET,
+                    title = "Rocket",
+                    detail = "Blasts that token forward a random 1–8 squares (stops safely before overshooting Home)."
                 )
                 PowerUpGuideRow(
-                    type = PowerUpType.DOUBLE_DICE,
-                    title = stringResource(R.string.powerup_double_dice_title),
-                    detail = stringResource(R.string.powerup_double_dice_desc)
+                    type = PowerUpType.GOLDEN_DICE,
+                    title = "Golden Dice",
+                    detail = "Guarantees your very next dice roll will be a 6!"
+                )
+                PowerUpGuideRow(
+                    type = PowerUpType.SHIELD,
+                    title = "Shield",
+                    detail = "Wraps that token in a protective bubble so it cannot be captured for your next 2 turns."
                 )
                 PowerUpGuideRow(
                     type = PowerUpType.BOMB_TRAP,
-                    title = stringResource(R.string.powerup_bomb_title),
-                    detail = stringResource(R.string.powerup_bomb_desc)
+                    title = "Bomb Trap",
+                    detail = "Pick any empty non-safe square within 6 steps ahead to hide a bomb for 3 rounds!"
                 )
 
                 Spacer(Modifier.height(4.dp))
@@ -202,8 +200,8 @@ fun PowerUpGuideDialog(
                     onClick = onDismiss,
                     tag = "powerup_guide_dismiss_button",
                     icon = Icons.Filled.Check,
-                    containerColor = MintGreen,
-                    lipColor = MintGreenDark,
+                    containerColor = theme.primaryActionBg,
+                    contentColor = theme.onPrimaryAction,
                     modifier = Modifier.fillMaxWidth()
                 )
             }
@@ -217,11 +215,15 @@ private fun PowerUpGuideRow(
     title: String,
     detail: String
 ) {
-    val accent = powerUpAccentColor(type)
+    val theme = LocalLudoTheme.current
+    val accent = powerUpAccentColor(type, theme)
+    val rowBg = powerUpSoftBg(type, theme)
+    val readableTitle = theme.accessibleAccentOn(accent, rowBg)
+
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        color = powerUpSoftBg(type)
+        color = rowBg
     ) {
         Row(
             modifier = Modifier
@@ -240,7 +242,7 @@ private fun PowerUpGuideRow(
                 Icon(
                     imageVector = powerUpIcon(type),
                     contentDescription = null,
-                    tint = Color.White,
+                    tint = theme.contrastingTextOn(accent),
                     modifier = Modifier.size(20.dp)
                 )
             }
@@ -248,13 +250,13 @@ private fun PowerUpGuideRow(
                 Text(
                     text = title,
                     style = MaterialTheme.typography.titleMedium,
-                    color = if (type == PowerUpType.DOUBLE_DICE) SunnyGoldDark else accent,
+                    color = readableTitle,
                     fontWeight = FontWeight.ExtraBold
                 )
                 Text(
                     text = detail,
                     style = MaterialTheme.typography.bodySmall,
-                    color = InkDark
+                    color = theme.surfaceText
                 )
             }
         }

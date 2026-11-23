@@ -2,6 +2,7 @@ package com.example.online
 
 import android.content.Context
 import com.example.R
+import com.example.engine.GameModeId
 import com.google.firebase.Timestamp
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
@@ -272,13 +273,14 @@ class OnlineProfileAndLeaderboardRepository(
     }
 
     /**
-     * Records a completed online match result (+1 game, optional +1 win) in both
-     * /users/{uid} and /leaderboard/{uid} atomically.
+     * Records a completed online match result (+1 game, optional +1 win, and per-mode win count)
+     * in both /users/{uid} and /leaderboard/{uid} atomically.
      */
     suspend fun recordOnlineMatchResult(
         uid: String,
         fallbackNickname: String,
-        won: Boolean
+        won: Boolean,
+        mode: GameModeId = GameModeId.CLASSIC
     ): Result<Unit> {
         val currentWeek = WeekKeyUtil.currentWeekKey()
         val cleanFallback = fallbackNickname.trim().take(24).ifBlank { "Player" }
@@ -303,6 +305,12 @@ class OnlineProfileAndLeaderboardRepository(
                     nextWeeklyWins
                 )
 
+                val nextUserModeWins = existingUser?.modeWins.orEmpty().toMutableMap().apply {
+                    if (won) {
+                        this[mode.name] = (this[mode.name] ?: 0L) + 1L
+                    }
+                }
+
                 if (!userSnap.exists()) {
                     tx.set(
                         userRef,
@@ -316,6 +324,7 @@ class OnlineProfileAndLeaderboardRepository(
                             "weeklyWins" to nextWeeklyWins,
                             "weeklyGamesPlayed" to nextWeeklyGames,
                             "weekKey" to currentWeek,
+                            "modeWins" to nextUserModeWins,
                             "createdAt" to FieldValue.serverTimestamp(),
                             "updatedAt" to FieldValue.serverTimestamp()
                         )
@@ -329,6 +338,7 @@ class OnlineProfileAndLeaderboardRepository(
                             "weeklyWins" to nextWeeklyWins,
                             "weeklyGamesPlayed" to nextWeeklyGames,
                             "weekKey" to currentWeek,
+                            "modeWins" to nextUserModeWins,
                             "updatedAt" to FieldValue.serverTimestamp()
                         )
                     )
@@ -347,6 +357,7 @@ class OnlineProfileAndLeaderboardRepository(
                             "weeklyWins" to nextWeeklyWins.coerceAtMost(50L),
                             "weeklyGamesPlayed" to nextWeeklyGames.coerceAtMost(50L),
                             "weekKey" to currentWeek,
+                            "modeWins" to nextUserModeWins,
                             "createdAt" to FieldValue.serverTimestamp(),
                             "updatedAt" to FieldValue.serverTimestamp()
                         )
@@ -361,6 +372,11 @@ class OnlineProfileAndLeaderboardRepository(
                         (if (lbSameWeek) (existingLb?.weeklyGamesPlayed ?: 0L) else 0L) + 1L,
                         lbWeeklyWins
                     )
+                    val nextLbModeWins = existingLb?.modeWins.orEmpty().toMutableMap().apply {
+                        if (won) {
+                            this[mode.name] = (this[mode.name] ?: 0L) + 1L
+                        }
+                    }
                     tx.update(
                         lbRef,
                         mapOf(
@@ -371,6 +387,7 @@ class OnlineProfileAndLeaderboardRepository(
                             "weeklyWins" to lbWeeklyWins,
                             "weeklyGamesPlayed" to lbWeeklyGames,
                             "weekKey" to currentWeek,
+                            "modeWins" to nextLbModeWins,
                             "updatedAt" to FieldValue.serverTimestamp()
                         )
                     )
@@ -390,7 +407,11 @@ class OnlineProfileAndLeaderboardRepository(
      * Queries with `.whereEqualTo("googleLinked", true)` to align strictly with `allow list` rules
      * and computes top 100 + the signed-in user's exact rank even if outside the top 100.
      */
-    fun observeLeaderboard(myUid: String, weekly: Boolean): Flow<LeaderboardSnapshot> = callbackFlow {
+    fun observeLeaderboard(
+        myUid: String,
+        weekly: Boolean,
+        modeFilter: GameModeId? = null
+    ): Flow<LeaderboardSnapshot> = callbackFlow {
         val currentWeek = WeekKeyUtil.currentWeekKey()
         val query = leaderboardCol.whereEqualTo("googleLinked", true)
         val registration = query.addSnapshotListener { snapshots, error ->
@@ -405,22 +426,25 @@ class OnlineProfileAndLeaderboardRepository(
             val rankedAll: List<RankedLeaderboardRow> = allEntries
                 .map { entry ->
                     val sameWeek = entry.weekKey == currentWeek
-                    val wins = if (weekly) {
-                        if (sameWeek) entry.weeklyWins.toInt() else 0
-                    } else {
-                        entry.wins.toInt()
+                    val wins = when {
+                        modeFilter != null -> (entry.modeWins[modeFilter.name] ?: 0L).toInt()
+                        weekly -> if (sameWeek) entry.weeklyWins.toInt() else 0
+                        else -> entry.wins.toInt()
                     }
-                    val games = if (weekly) {
-                        if (sameWeek) entry.weeklyGamesPlayed.toInt() else 0
-                    } else {
-                        entry.gamesPlayed.toInt()
+                    val games = when {
+                        modeFilter != null -> maxOf(entry.gamesPlayed.toInt(), wins)
+                        weekly -> if (sameWeek) entry.weeklyGamesPlayed.toInt() else 0
+                        else -> entry.gamesPlayed.toInt()
                     }
                     val winRate = if (games > 0) ((wins * 100.0) / games).toInt().coerceIn(0, 100) else 0
                     Triple(entry, wins to games, winRate)
                 }
                 .filter { (entry, stats, _) ->
-                    // Show players who have played in the selected timeframe, or always include self
-                    !weekly || stats.second > 0 || entry.userId == myUid
+                    when {
+                        modeFilter != null -> stats.first > 0 || entry.userId == myUid
+                        weekly -> stats.second > 0 || entry.userId == myUid
+                        else -> true
+                    }
                 }
                 .sortedWith(
                     compareByDescending<Triple<LeaderboardEntryDoc, Pair<Int, Int>, Int>> { it.second.first }
@@ -450,6 +474,18 @@ class OnlineProfileAndLeaderboardRepository(
         awaitClose { registration.remove() }
     }
 
+    private fun parseModeWins(raw: Any?): Map<String, Long> {
+        val map = raw as? Map<*, *> ?: return emptyMap()
+        val normalized = mutableMapOf<String, Long>()
+        for ((k, v) in map) {
+            val keyStr = k as? String ?: continue
+            val count = (v as? Number)?.toLong()?.coerceAtLeast(0L) ?: continue
+            val migratedKey = GameModeId.fromLegacyName(keyStr).first.name
+            normalized[migratedKey] = (normalized[migratedKey] ?: 0L) + count
+        }
+        return normalized
+    }
+
     private fun parseUserProfile(doc: DocumentSnapshot): UserProfileDoc? {
         if (!doc.exists()) return null
         val est = DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
@@ -464,6 +500,7 @@ class OnlineProfileAndLeaderboardRepository(
             weeklyWins = doc.getLong("weeklyWins") ?: 0L,
             weeklyGamesPlayed = doc.getLong("weeklyGamesPlayed") ?: 0L,
             weekKey = doc.getString("weekKey") ?: WeekKeyUtil.currentWeekKey(),
+            modeWins = parseModeWins(doc.get("modeWins")),
             createdAt = doc.getTimestamp("createdAt", est) ?: Timestamp.now(),
             updatedAt = doc.getTimestamp("updatedAt", est) ?: Timestamp.now()
         )
@@ -483,6 +520,7 @@ class OnlineProfileAndLeaderboardRepository(
             weeklyWins = doc.getLong("weeklyWins") ?: 0L,
             weeklyGamesPlayed = doc.getLong("weeklyGamesPlayed") ?: 0L,
             weekKey = doc.getString("weekKey") ?: WeekKeyUtil.currentWeekKey(),
+            modeWins = parseModeWins(doc.get("modeWins")),
             createdAt = doc.getTimestamp("createdAt", est) ?: Timestamp.now(),
             updatedAt = doc.getTimestamp("updatedAt", est) ?: Timestamp.now()
         )

@@ -10,7 +10,9 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.engine.GameModeId
+import com.example.ui.theme.LudoThemeId
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 private val Context.ludoSettingsDataStore: DataStore<Preferences> by preferencesDataStore(
@@ -21,13 +23,14 @@ data class AppSettings(
     val soundEffectsEnabled: Boolean = true,
     val soundEffectsVolume: Float = 1f,
     val vibrationEnabled: Boolean = true,
+    val themeId: LudoThemeId = LudoThemeId.DEFAULT,
     val hasSeenTutorial: Boolean = false,
     val seenModeGuides: Set<String> = emptySet(),
     val activeOnlineRoomCode: String = "",
     val isLoaded: Boolean = false
 ) {
     val hasSeenPowerUpGuide: Boolean
-        get() = GameModeId.POWER_UP.name in seenModeGuides
+        get() = GameModeId.MAGIC.name in seenModeGuides
 
     fun hasSeenModeGuide(mode: GameModeId): Boolean = mode.name in seenModeGuides
 }
@@ -38,6 +41,7 @@ class SettingsRepository(private val context: Context) {
         val SOUND_EFFECTS = booleanPreferencesKey("sound_effects_enabled")
         val SOUND_EFFECTS_VOLUME = floatPreferencesKey("sound_effects_volume")
         val VIBRATION = booleanPreferencesKey("vibration_enabled")
+        val THEME_ID = stringPreferencesKey("app_theme_id")
         val SEEN_POWER_UP_GUIDE = booleanPreferencesKey("seen_power_up_guide")
         val SEEN_TUTORIAL = booleanPreferencesKey("seen_tutorial")
         val SEEN_MODE_GUIDES = stringSetPreferencesKey("seen_mode_guides")
@@ -47,18 +51,34 @@ class SettingsRepository(private val context: Context) {
     val settingsFlow: Flow<AppSettings> = context.ludoSettingsDataStore.data.map { prefs ->
         val legacyPowerUp = prefs[Keys.SEEN_POWER_UP_GUIDE] ?: false
         val seenSet = buildSet {
-            addAll(prefs[Keys.SEEN_MODE_GUIDES].orEmpty())
-            if (legacyPowerUp) add(GameModeId.POWER_UP.name)
+            for (raw in prefs[Keys.SEEN_MODE_GUIDES].orEmpty()) {
+                add(GameModeId.fromLegacyName(raw).first.name)
+            }
+            if (legacyPowerUp) add(GameModeId.MAGIC.name)
         }
         AppSettings(
             soundEffectsEnabled = prefs[Keys.SOUND_EFFECTS] ?: true,
             soundEffectsVolume = (prefs[Keys.SOUND_EFFECTS_VOLUME] ?: 1f).coerceIn(0f, 1f),
             vibrationEnabled = prefs[Keys.VIBRATION] ?: true,
+            themeId = LudoThemeId.fromStorageKey(prefs[Keys.THEME_ID]),
             hasSeenTutorial = prefs[Keys.SEEN_TUTORIAL] ?: false,
             seenModeGuides = seenSet,
             activeOnlineRoomCode = prefs[Keys.ACTIVE_ONLINE_ROOM].orEmpty(),
             isLoaded = true
         )
+    }
+
+    suspend fun readInitialThemeId(): LudoThemeId {
+        return runCatching {
+            val prefs = context.ludoSettingsDataStore.data.first()
+            LudoThemeId.fromStorageKey(prefs[Keys.THEME_ID])
+        }.getOrDefault(LudoThemeId.DEFAULT)
+    }
+
+    suspend fun setThemeId(themeId: LudoThemeId) {
+        context.ludoSettingsDataStore.edit { prefs ->
+            prefs[Keys.THEME_ID] = themeId.name
+        }
     }
 
     suspend fun setSoundEffectsEnabled(enabled: Boolean) {
@@ -94,15 +114,17 @@ class SettingsRepository(private val context: Context) {
     suspend fun markModeGuideSeen(mode: GameModeId) {
         context.ludoSettingsDataStore.edit { prefs ->
             val current = prefs[Keys.SEEN_MODE_GUIDES].orEmpty()
+                .map { GameModeId.fromLegacyName(it).first.name }
+                .toSet()
             prefs[Keys.SEEN_MODE_GUIDES] = current + mode.name
-            if (mode == GameModeId.POWER_UP) {
+            if (mode == GameModeId.MAGIC) {
                 prefs[Keys.SEEN_POWER_UP_GUIDE] = true
             }
         }
     }
 
     suspend fun markPowerUpGuideSeen() {
-        markModeGuideSeen(GameModeId.POWER_UP)
+        markModeGuideSeen(GameModeId.MAGIC)
     }
 
     suspend fun setActiveOnlineRoomCode(roomCode: String) {

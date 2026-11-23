@@ -5,16 +5,16 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.audio.LudoHapticsManager
 import com.example.audio.SoundManager
-import com.example.bot.BotPowerUpAction
 import com.example.data.MatchHistoryRepository
 import com.example.engine.GameModeId
 import com.example.engine.GameState
+import com.example.engine.LegalMove
 import com.example.engine.LudoBoardGeometry
 import com.example.engine.LudoEngine
 import com.example.engine.PlayerColor
 import com.example.engine.PlayerSetup
 import com.example.engine.PowerUpType
-import com.example.engine.RuleSetRegistry
+import com.example.engine.Token
 import com.example.engine.TokenRef
 import com.example.engine.TurnPhase
 import com.example.online.OnlineActionType
@@ -28,9 +28,13 @@ import com.example.ui.game.CaptureBurstState
 import com.example.ui.game.CelebrationSequenceHelper
 import com.example.ui.game.ChaosAnnouncementState
 import com.example.ui.game.DiceCube3DEngine
+import com.example.ui.game.FlyingCapturedToken
 import com.example.ui.game.GameUiState
 import com.example.ui.game.PowerUpBannerState
 import com.example.ui.game.PowerUpTargetingState
+import com.example.ui.game.TokenMoveOptionResolver
+import com.example.ui.game.TopToastMessage
+import com.example.ui.game.TopToastTone
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -69,9 +73,9 @@ data class OnlineGameWrapperState(
 )
 
 /**
- * Auth-scoped ViewModel (keyed by uid + roomCode) driving synchronized online Ludo gameplay.
+ * Auth-scoped ViewModel (keyed by uid + roomCode) driving synchronized online Ludo v2.1 gameplay.
  * Firestore `/rooms/{roomCode}` is the single source of truth; all clients replay matching
- * dice/hop/power-up/capture animations whenever `turnSeq` advances.
+ * single-die roll stacking, hop, Magic item, Master unlock, and capture animations whenever `turnSeq` advances.
  */
 class OnlineGameViewModel(
     private val uid: String,
@@ -87,6 +91,13 @@ class OnlineGameViewModel(
     private val _state = MutableStateFlow(OnlineGameWrapperState())
     val state: StateFlow<OnlineGameWrapperState> = _state.asStateFlow()
 
+    private data class PendingOnlineFollowUp(
+        val tokenColor: PlayerColor,
+        val tokenId: Int,
+        val dieValueUsed: Int,
+        val afterTurnSeq: Int
+    )
+
     private var lastObservedTurnSeq: Int = -1
     private var lastObservedRollSeq: Int = -1
     private var lastTimedStartMs: Long = 0L
@@ -94,13 +105,16 @@ class OnlineGameViewModel(
     private var lastTimeoutRequestedTurnSeq: Int = -1
     private var lastWarnedSecond: Int = -1
     private var powerUpBannerCounter: Int = 0
+    private var topToastCounter: Int = 0
     private var celebrationCounter: Int = 0
+    private var pendingFollowUpMove: PendingOnlineFollowUp? = null
 
     private var animationJob: Job? = null
     private var botCoordinatorJob: Job? = null
     private var autoSingleMoveJob: Job? = null
     private var bannerJob: Job? = null
     private var powerUpBannerJob: Job? = null
+    private var topToastJob: Job? = null
     private var timerLoopJob: Job? = null
     private var heartbeatJob: Job? = null
 
@@ -184,6 +198,12 @@ class OnlineGameViewModel(
             }
         } else null
 
+        val pendingBombTargeting = if (isLocalTurn && newGameState.phase == TurnPhase.AWAITING_BOMB_PLACEMENT) {
+            newGameState.powerUpState.pendingBombPlacement?.let {
+                PowerUpTargetingState.BombPlacement(it.validTrackIndices.toSet())
+            }
+        } else null
+
         _state.update { current ->
             val mergedGameState = if (!turnAdvanced &&
                 newGameState.phase == TurnPhase.AWAITING_MOVE &&
@@ -200,15 +220,11 @@ class OnlineGameViewModel(
             }
             val nextGameUi = current.gameUiState.copy(
                 gameState = mergedGameState,
-                powerUpTargeting = if (isLocalTurn && mergedGameState.phase == TurnPhase.AWAITING_ROLL) {
-                    current.gameUiState.powerUpTargeting
-                } else null,
+                powerUpTargeting = pendingBombTargeting,
                 displayedDiceValue = mergedGameState.lastRawDiceValue
                     ?: mergedGameState.lastDiceValue
                     ?: current.gameUiState.displayedDiceValue,
-                displayedSecondDiceValue = mergedGameState.lastSecondDiceValue
-                    ?: current.gameUiState.displayedSecondDiceValue
-                    ?: 6,
+                displayedSecondDiceValue = null,
                 allTokensHomeCelebration = nextCelebration
             )
             current.copy(
@@ -230,7 +246,6 @@ class OnlineGameViewModel(
             lastObservedRollSeq = room.rollSeq
         }
 
-        // Record online leaderboard stats exactly once when the match completes
         if (room.status == RoomStatus.FINISHED && recordedFinishedTurnSeq != room.turnSeq) {
             recordedFinishedTurnSeq = room.turnSeq
             if (detectedCelebration == null) {
@@ -240,31 +255,62 @@ class OnlineGameViewModel(
             recordStatsIfParticipant(newGameState, localColor)
         }
 
-        // Schedule single-legal-move auto-play for local human (after synced dice tumble finishes)
+        // Execute queued step 2 of a combined chip (e.g. [9] = 6 then 3) once turnSeq advances
+        val queued = pendingFollowUpMove
+        if (queued != null && room.turnSeq > queued.afterTurnSeq) {
+            pendingFollowUpMove = null
+            if (isLocalTurn && newGameState.phase == TurnPhase.AWAITING_MOVE) {
+                val matchingNext = newGameState.legalMoves.firstOrNull {
+                    it.color == queued.tokenColor &&
+                        it.includesToken(queued.tokenId) &&
+                        it.dieValueUsed == queued.dieValueUsed
+                }
+                if (matchingNext != null) {
+                    val expectedSeq = room.turnSeq
+                    autoSingleMoveJob?.cancel()
+                    autoSingleMoveJob = viewModelScope.launch {
+                        delay(260L)
+                        val latest = _state.value.room ?: return@launch
+                        if (latest.turnSeq == expectedSeq && latest.status == RoomStatus.PLAYING) {
+                            roomRepo.submitTokenMove(
+                                roomCode = roomCode,
+                                actorUid = uid,
+                                expectedTurnSeq = expectedSeq,
+                                tokenColor = matchingNext.color,
+                                tokenId = matchingNext.tokenId,
+                                dieValueUsed = matchingNext.dieValueUsed,
+                                asBotCoordinator = false
+                            )
+                        }
+                    }
+                    return
+                }
+            }
+        }
+
+        // Auto-move after 300 ms when 1 legal move exists for the whole tray OR all tokens are in base on a 6
         autoSingleMoveJob?.cancel()
-        if (isLocalTurn &&
-            newGameState.phase == TurnPhase.AWAITING_MOVE &&
-            newGameState.legalMoves.size == 1
-        ) {
-            val soleMove = newGameState.legalMoves.first()
+        val autoMove = if (isLocalTurn) TokenMoveOptionResolver.findAutoMove(newGameState) else null
+        if (autoMove != null) {
             val expectedSeq = room.turnSeq
             autoSingleMoveJob = viewModelScope.launch {
-                delay(650L)
+                delay(300L)
                 val latest = _state.value.room ?: return@launch
                 if (latest.turnSeq == expectedSeq && latest.status == RoomStatus.PLAYING) {
                     roomRepo.submitTokenMove(
                         roomCode = roomCode,
                         actorUid = uid,
                         expectedTurnSeq = expectedSeq,
-                        tokenColor = soleMove.color,
-                        tokenId = soleMove.tokenId,
+                        tokenColor = autoMove.color,
+                        tokenId = autoMove.tokenId,
+                        dieValueUsed = autoMove.dieValueUsed,
                         asBotCoordinator = false
                     )
                 }
             }
         }
 
-        // Schedule deterministic Bot / Bot-Takeover coordinator step
+        // Schedule deterministic Bot coordinator step (for actual bot seats or left players)
         botCoordinatorJob?.cancel()
         if (room.status == RoomStatus.PLAYING &&
             !newGameState.isMatchFinished &&
@@ -273,7 +319,7 @@ class OnlineGameViewModel(
         ) {
             val expectedSeq = room.turnSeq
             botCoordinatorJob = viewModelScope.launch {
-                delay(1250L)
+                delay(1100L)
                 val latest = _state.value.room ?: return@launch
                 if (latest.turnSeq == expectedSeq && latest.status == RoomStatus.PLAYING) {
                     roomRepo.executeBotStep(
@@ -297,16 +343,14 @@ class OnlineGameViewModel(
             when (room.lastActionType) {
                 OnlineActionType.ROLL -> {
                     if (rollAdvanced) {
-                        val finalD1 = newState.lastRawDiceValue ?: newState.lastDiceValue ?: 6
-                        val finalD2 = newState.lastSecondDiceValue ?: 6
+                        val finalFace = newState.lastRawDiceValue ?: newState.lastDiceValue ?: 6
                         soundManager.playDiceRoll()
                         hapticsManager.vibrateDiceRoll()
                         _state.update {
                             it.copy(
                                 gameUiState = it.gameUiState.copy(
                                     isDiceRolling = true,
-                                    displayedDiceValue = finalD1,
-                                    displayedSecondDiceValue = finalD2,
+                                    displayedDiceValue = finalFace,
                                     diceRollTrigger = it.gameUiState.diceRollTrigger + 1
                                 )
                             )
@@ -316,10 +360,14 @@ class OnlineGameViewModel(
                             it.copy(
                                 gameUiState = it.gameUiState.copy(
                                     isDiceRolling = false,
-                                    displayedDiceValue = finalD1,
-                                    displayedSecondDiceValue = finalD2
+                                    displayedDiceValue = finalFace
                                 )
                             )
+                        }
+                        if (newState.phase == TurnPhase.TURN_CANCELLED_TRIPLE_SIX ||
+                            room.lastActionSummary.contains("three 6s", ignoreCase = true)
+                        ) {
+                            showTopToast("Three 6s — turn lost", TopToastTone.TRIPLE_SIX)
                         }
                     }
                 }
@@ -332,89 +380,46 @@ class OnlineGameViewModel(
                     if (movedColor != null && tokenId in 0..3 && fromP >= -1 && toP >= 0) {
                         animateSyncedHop(movedColor, tokenId, fromP, toP)
                     }
-                    // Synced capture / home / bomb / powerup feedback
                     if (prevState != null) {
                         detectAndPlayMoveFeedback(prevState, newState, room)
                     }
                 }
 
-                OnlineActionType.SHIELD -> {
-                    soundManager.playPowerUpActivate(PowerUpType.SHIELD)
-                    hapticsManager.vibratePowerUpActivate(PowerUpType.SHIELD)
-                    showPowerUpBanner(
-                        type = PowerUpType.SHIELD,
-                        eyebrow = "POWER-UP!",
-                        title = "Shield Active!",
-                        detail = room.lastActionSummary,
-                        durationMs = 1350L
-                    )
-                }
-
-                OnlineActionType.DOUBLE_DICE -> {
-                    soundManager.playPowerUpActivate(PowerUpType.DOUBLE_DICE)
-                    hapticsManager.vibratePowerUpActivate(PowerUpType.DOUBLE_DICE)
-                    showPowerUpBanner(
-                        type = PowerUpType.DOUBLE_DICE,
-                        eyebrow = "POWER-UP!",
-                        title = "Double Dice Ready!",
-                        detail = room.lastActionSummary,
-                        durationMs = 1350L
-                    )
-                }
-
                 OnlineActionType.BOMB -> {
                     soundManager.playPowerUpActivate(PowerUpType.BOMB_TRAP)
                     hapticsManager.vibratePowerUpActivate(PowerUpType.BOMB_TRAP)
-                    showPowerUpBanner(
-                        type = PowerUpType.BOMB_TRAP,
-                        eyebrow = "WATCH OUT!",
-                        title = "Bomb Hidden!",
-                        detail = "A hidden bomb trap was placed on the track!",
-                        durationMs = 1350L
-                    )
+                    showTopToast("Bomb Trap hidden on the track!", TopToastTone.MAGIC_BOMB)
                 }
 
                 else -> Unit
             }
 
-            // Chaos & Elimination synced banners
             if (prevState != null) {
+                // Master mode home-column unlock toast
+                if (newState.lastHomeUnlockEventId > prevState.lastHomeUnlockEventId &&
+                    newState.lastHomeUnlockedColor != null
+                ) {
+                    val unlockedName = newState.playerByColor(newState.lastHomeUnlockedColor)?.nickname
+                        ?: newState.lastHomeUnlockedColor.displayName
+                    showTopToast("$unlockedName unlocked Home!", TopToastTone.MASTER_UNLOCK)
+                }
+
                 val newAnnId = newState.chaosState.announcementId
                 if (newAnnId > prevState.chaosState.announcementId && newState.chaosState.activeAnnouncement != null) {
                     val ev = newState.chaosState.activeAnnouncement
                     soundManager.playTokenHome()
                     hapticsManager.vibrateCapture()
-                    bannerJob?.cancel()
-                    bannerJob = viewModelScope.launch {
-                        _state.update {
-                            it.copy(
-                                gameUiState = it.gameUiState.copy(
-                                    activeChaosBanner = ChaosAnnouncementState(
-                                        event = ev,
-                                        detail = newState.chaosState.announcementDetail,
-                                        triggerKey = newAnnId
-                                    )
-                                )
-                            )
-                        }
-                        delay(2400L)
-                        _state.update { it.copy(gameUiState = it.gameUiState.copy(activeChaosBanner = null)) }
-                    }
+                    showTopToast(
+                        "${ev.title} ${newState.chaosState.announcementDetail}",
+                        TopToastTone.CHAOS
+                    )
                 } else if (newState.eliminatedOrder.size > prevState.eliminatedOrder.size) {
                     val elimColor = newState.eliminatedOrder.lastOrNull()
                     if (elimColor != null) {
                         soundManager.playCapture()
                         hapticsManager.vibrateCapture()
-                        bannerJob?.cancel()
-                        bannerJob = viewModelScope.launch {
-                            _state.update {
-                                it.copy(gameUiState = it.gameUiState.copy(eliminatedBannerColor = elimColor))
-                            }
-                            delay(2200L)
-                            _state.update {
-                                it.copy(gameUiState = it.gameUiState.copy(eliminatedBannerColor = null))
-                            }
-                        }
+                        val elimName = newState.playerByColor(elimColor)?.nickname ?: elimColor.displayName
+                        showTopToast("$elimName eliminated!", TopToastTone.ELIMINATION)
                     }
                 }
             }
@@ -430,7 +435,7 @@ class OnlineGameViewModel(
         val ref = TokenRef(color, tokenId)
         val steps = if (fromProgress < 0) {
             listOf(0)
-        } else if (toProgress > fromProgress && (toProgress - fromProgress) <= 12) {
+        } else if (toProgress > fromProgress && (toProgress - fromProgress) <= 14) {
             (fromProgress + 1..toProgress).toList()
         } else {
             listOf(toProgress)
@@ -441,7 +446,7 @@ class OnlineGameViewModel(
             val (fromR, fromC) = LudoBoardGeometry.tokenBoardPosition(color, tokenId, prevP, false)
             val (toR, toC) = LudoBoardGeometry.tokenBoardPosition(color, tokenId, stepP, false)
             soundManager.playTokenMove()
-            val subFrames = 4
+            val subFrames = 5
             val stepMs = if (steps.size > 6) 80L else 110L
             for (f in 1..subFrames) {
                 val t = f.toFloat() / subFrames
@@ -451,13 +456,13 @@ class OnlineGameViewModel(
                         gameUiState = it.gameUiState.copy(
                             isAnimatingMove = true,
                             animatingToken = ref,
-                            animatingRow = fromR + (toR - fromR) * t,
+                            animatingRow = fromR + (toR - fromR) * t - arc * 0.24f,
                             animatingCol = fromC + (toC - fromC) * t,
-                            hopScale = 1f + arc * 0.32f
+                            hopScale = 1f + arc * 0.28f
                         )
                     )
                 }
-                delay(stepMs / subFrames)
+                delay((stepMs / subFrames).coerceAtLeast(14L))
             }
             prevP = stepP
         }
@@ -472,12 +477,11 @@ class OnlineGameViewModel(
         }
     }
 
-    private fun detectAndPlayMoveFeedback(prev: GameState, next: GameState, room: OnlineRoom) {
+    private suspend fun detectAndPlayMoveFeedback(prev: GameState, next: GameState, room: OnlineRoom) {
         val movedColor = room.lastMovedColor ?: return
         val tokenId = room.lastMovedTokenId
         val toP = room.lastMovedToProgress
 
-        // Bomb detonation check: fewer bombs and moved token sent to base
         val movedTokenNow = next.playerByColor(movedColor)?.tokens?.firstOrNull { it.id == tokenId }
         if (next.powerUpState.bombs.size < prev.powerUpState.bombs.size &&
             movedTokenNow?.isInBase == true &&
@@ -498,38 +502,34 @@ class OnlineGameViewModel(
                     )
                 )
             }
-            showPowerUpBanner(
-                type = PowerUpType.BOMB_TRAP,
-                isExplosion = true,
-                eyebrow = "KABOOM!",
-                title = "Bomb Trap Triggered!",
-                detail = room.lastActionSummary,
-                durationMs = 1500L
-            )
+            showTopToast(room.lastActionSummary.ifBlank { "Bomb Trap triggered!" }, TopToastTone.MAGIC_BOMB)
+            animateOnlineCapturedReturn(listOf(TokenRef(movedColor, tokenId)), r, c)
             return
         }
 
-        // Token reached home
-        if (toP == 56) {
+        if (toP == Token.HOME_PROGRESS) {
             soundManager.playTokenHome()
             _state.update {
                 it.copy(
                     gameUiState = it.gameUiState.copy(
-                        homeConfettiTrigger = it.gameUiState.homeConfettiTrigger + 1
+                        homeConfettiTrigger = it.gameUiState.homeConfettiTrigger + 1,
+                        homeConfettiColor = movedColor
                     )
                 )
             }
         }
 
-        // Capture detection: any opponent token went from track to base
-        val capturedPlayer = next.players.firstOrNull { np ->
-            if (np.color == movedColor) return@firstOrNull false
-            val op = prev.playerByColor(np.color) ?: return@firstOrNull false
-            np.tokens.indices.any { idx ->
-                !op.tokens[idx].isInBase && np.tokens[idx].isInBase
+        val capturedRefs = mutableListOf<TokenRef>()
+        for (np in next.players) {
+            if (np.color == movedColor) continue
+            val op = prev.playerByColor(np.color) ?: continue
+            np.tokens.indices.forEach { idx ->
+                if (!op.tokens[idx].isInBase && np.tokens[idx].isInBase) {
+                    capturedRefs += TokenRef(np.color, np.tokens[idx].id)
+                }
             }
         }
-        if (capturedPlayer != null) {
+        if (capturedRefs.isNotEmpty()) {
             val (hitR, hitC) = LudoBoardGeometry.tokenBoardPosition(movedColor, tokenId, toP.coerceAtLeast(0), false)
             soundManager.playCapture()
             hapticsManager.vibrateCapture()
@@ -537,7 +537,7 @@ class OnlineGameViewModel(
                 it.copy(
                     gameUiState = it.gameUiState.copy(
                         captureBurst = CaptureBurstState(
-                            color = capturedPlayer.color,
+                            color = capturedRefs.first().color,
                             row = hitR,
                             col = hitC,
                             triggerKey = (it.gameUiState.captureBurst?.triggerKey ?: 0) + 1
@@ -545,16 +545,58 @@ class OnlineGameViewModel(
                     )
                 )
             }
+            animateOnlineCapturedReturn(capturedRefs, hitR, hitC)
         }
 
-        // Power-up tile pickup check
-        val prevHeld = prev.playerByColor(movedColor)?.heldPowerUps.orEmpty()
-        val nextHeld = next.playerByColor(movedColor)?.heldPowerUps.orEmpty()
-        if (nextHeld.size > prevHeld.size) {
-            val collected = nextHeld.last()
-            soundManager.playPowerUpPickup(collected)
-            hapticsManager.vibratePowerUpPickup(collected)
+        // Instant Magic item pickup detection (tile removed from board)
+        if (next.mode == GameModeId.MAGIC && next.powerUpState.tiles.size < prev.powerUpState.tiles.size) {
+            val nextIds = next.powerUpState.tiles.map { it.id }.toSet()
+            val collectedTile = prev.powerUpState.tiles.firstOrNull { it.id !in nextIds }
+            if (collectedTile != null) {
+                soundManager.playPowerUpPickup(collectedTile.type)
+                hapticsManager.vibratePowerUpPickup(collectedTile.type)
+                val tone = when (collectedTile.type) {
+                    PowerUpType.ROCKET -> TopToastTone.MAGIC_ROCKET
+                    PowerUpType.GOLDEN_DICE -> TopToastTone.MAGIC_GOLDEN
+                    PowerUpType.SHIELD -> TopToastTone.MAGIC_SHIELD
+                    PowerUpType.BOMB_TRAP -> TopToastTone.MAGIC_BOMB
+                }
+                showTopToast(
+                    room.lastActionSummary.ifBlank { "${collectedTile.type.title} collected!" },
+                    tone
+                )
+            }
         }
+    }
+
+    private suspend fun animateOnlineCapturedReturn(
+        victims: List<TokenRef>,
+        originRow: Float,
+        originCol: Float
+    ) {
+        if (victims.isEmpty()) return
+        val targets = victims.map { v ->
+            val (br, bc) = LudoBoardGeometry.baseTokenCenter(v.color, v.tokenId)
+            Triple(v, br, bc)
+        }
+        val frames = 11
+        for (f in 1..frames) {
+            val rawT = f.toFloat() / frames
+            val t = 1f - (1f - rawT) * (1f - rawT)
+            val lift = kotlin.math.sin(rawT * Math.PI).toFloat()
+            val flying = targets.map { (v, destR, destC) ->
+                FlyingCapturedToken(
+                    color = v.color,
+                    tokenId = v.tokenId,
+                    row = originRow + (destR - originRow) * t - lift * 0.85f,
+                    col = originCol + (destC - originCol) * t,
+                    scale = 1f + lift * 0.24f
+                )
+            }
+            _state.update { it.copy(gameUiState = it.gameUiState.copy(flyingCapturedTokens = flying)) }
+            delay(22L)
+        }
+        _state.update { it.copy(gameUiState = it.gameUiState.copy(flyingCapturedTokens = emptyList())) }
     }
 
     private fun startTurnAndMatchTimerLoop() {
@@ -568,20 +610,28 @@ class OnlineGameViewModel(
                 val gs = room.gameState ?: continue
                 if (gs.isMatchFinished) continue
 
-                val turnStartMs = room.turnStartedAt?.toDate()?.time ?: System.currentTimeMillis()
-                val elapsedMs = (System.currentTimeMillis() - turnStartMs).coerceAtLeast(0L)
-                val totalMs = GameUiState.TURN_DURATION_SECONDS * 1000L
-                val remainingMs = (totalMs - elapsedMs).coerceAtLeast(0L)
-                val remainingSec = ((remainingMs + 999L) / 1000L).toInt()
-                    .coerceIn(0, GameUiState.TURN_DURATION_SECONDS)
-                val progress = (remainingMs.toFloat() / totalMs.toFloat()).coerceIn(0f, 1f)
+                val turnTimerSec = room.turnTimerSeconds.coerceAtLeast(0)
+                val timerEnabled = turnTimerSec > 0
 
-                if (remainingSec in 1..5 && remainingSec != lastWarnedSecond) {
-                    lastWarnedSecond = remainingSec
-                    soundManager.playTimerWarning()
+                var remainingSec = turnTimerSec
+                var progress = 1f
+                var remainingMs = turnTimerSec * 1000L
+                var elapsedMs = 0L
+                val totalMs = turnTimerSec * 1000L
+
+                if (timerEnabled) {
+                    val turnStartMs = room.turnStartedAt?.toDate()?.time ?: System.currentTimeMillis()
+                    elapsedMs = (System.currentTimeMillis() - turnStartMs).coerceAtLeast(0L)
+                    remainingMs = (totalMs - elapsedMs).coerceAtLeast(0L)
+                    remainingSec = ((remainingMs + 999L) / 1000L).toInt().coerceIn(0, turnTimerSec)
+                    progress = (remainingMs.toFloat() / totalMs.toFloat()).coerceIn(0f, 1f)
+
+                    if (remainingSec in 1..3 && remainingSec != lastWarnedSecond) {
+                        lastWarnedSecond = remainingSec
+                        soundManager.playTimerWarning()
+                    }
                 }
 
-                // Update Timed mode display clock
                 val timedRemaining = if (room.mode == GameModeId.TIMED && lastTimedStartMs > 0L) {
                     val elapsedMatchSec = ((System.currentTimeMillis() - lastTimedStartMs) / 1000L).toInt()
                     (room.timedDurationSeconds - elapsedMatchSec).coerceAtLeast(0)
@@ -603,19 +653,19 @@ class OnlineGameViewModel(
                     )
                 }
 
-                // Trigger Timed match expiry on coordinator
                 if (room.mode == GameModeId.TIMED && timedRemaining <= 0 && room.isBotCoordinator(uid)) {
                     roomRepo.submitTimedClockExpired(roomCode, uid, room.turnSeq)
                 }
 
-                // Trigger synced 30s turn timeout (active player at 0s, or coordinator after 1.5s grace)
-                val shouldSubmitTimeout = (remainingMs == 0L && current.isLocalPlayersTurn) ||
-                    (elapsedMs >= totalMs + 1500L && room.isBotCoordinator(uid))
+                if (timerEnabled) {
+                    val shouldSubmitTimeout = (remainingMs == 0L && current.isLocalPlayersTurn) ||
+                        (elapsedMs >= totalMs + 1500L && room.isBotCoordinator(uid))
 
-                if (shouldSubmitTimeout && lastTimeoutRequestedTurnSeq != room.turnSeq) {
-                    lastTimeoutRequestedTurnSeq = room.turnSeq
-                    viewModelScope.launch {
-                        roomRepo.submitTurnTimeout(roomCode, uid, room.turnSeq)
+                    if (shouldSubmitTimeout && lastTimeoutRequestedTurnSeq != room.turnSeq) {
+                        lastTimeoutRequestedTurnSeq = room.turnSeq
+                        viewModelScope.launch {
+                            roomRepo.submitTurnTimeout(roomCode, uid, room.turnSeq)
+                        }
                     }
                 }
             }
@@ -625,7 +675,6 @@ class OnlineGameViewModel(
     private fun startHeartbeatLoop() {
         heartbeatJob?.cancel()
         heartbeatJob = viewModelScope.launch {
-            // Immediate heartbeat on entry so reconnecting players reclaim their seat right away
             roomRepo.sendHeartbeatAndSyncPresence(roomCode, uid)
             while (true) {
                 delay(15_000L)
@@ -641,7 +690,7 @@ class OnlineGameViewModel(
         if (localColor == null) return
         val winnerColor = finalState.finishOrder.firstOrNull()
         val won = when {
-            finalState.mode == GameModeId.TEAMS_2V2 && winnerColor != null ->
+            finalState.isTeamMatch && winnerColor != null ->
                 localColor == winnerColor || localColor == winnerColor.opposite()
             else -> localColor == winnerColor
         }
@@ -649,7 +698,8 @@ class OnlineGameViewModel(
             profileRepo.recordOnlineMatchResult(
                 uid = uid,
                 fallbackNickname = myNickname,
-                won = won
+                won = won,
+                mode = finalState.mode
             )
             matchHistoryRepo?.recordMatch(
                 entry = MatchHistoryRepository.buildEntryFromGameState(
@@ -705,23 +755,50 @@ class OnlineGameViewModel(
 
     fun onTokenTapped(tokenRef: TokenRef) {
         val current = _state.value
-        val room = current.room ?: return
-        if (!current.isLocalPlayersTurn || current.isSubmittingAction) return
+        if (!current.isLocalPlayersTurn || current.isSubmittingAction || current.gameUiState.isAnimatingMove) return
         if (current.gameUiState.gameState.phase != TurnPhase.AWAITING_MOVE) return
 
         val chosenMove = current.gameUiState.gameState.resolveMoveForToken(tokenRef) ?: return
+        onMoveSelected(chosenMove)
+    }
 
+    fun onMoveSelected(move: LegalMove) {
+        onMoveSequenceSelected(listOf(move))
+    }
+
+    fun onMoveSequenceSelected(moves: List<LegalMove>) {
+        if (moves.isEmpty()) return
+        val current = _state.value
+        val room = current.room ?: return
+        if (!current.isLocalPlayersTurn || current.isSubmittingAction || current.gameUiState.isAnimatingMove) return
+        if (current.gameUiState.gameState.phase != TurnPhase.AWAITING_MOVE) return
+
+        val firstMove = moves.first()
+        val secondMove = moves.getOrNull(1)
+        pendingFollowUpMove = if (secondMove != null) {
+            PendingOnlineFollowUp(
+                tokenColor = secondMove.color,
+                tokenId = secondMove.tokenId,
+                dieValueUsed = secondMove.dieValueUsed,
+                afterTurnSeq = room.turnSeq
+            )
+        } else null
+
+        autoSingleMoveJob?.cancel()
         viewModelScope.launch {
             _state.update { it.copy(isSubmittingAction = true, errorMessage = null) }
             val res = roomRepo.submitTokenMove(
                 roomCode = roomCode,
                 actorUid = uid,
                 expectedTurnSeq = room.turnSeq,
-                tokenColor = chosenMove.color,
-                tokenId = chosenMove.tokenId,
-                dieValueUsed = chosenMove.dieValueUsed,
+                tokenColor = firstMove.color,
+                tokenId = firstMove.tokenId,
+                dieValueUsed = firstMove.dieValueUsed,
                 asBotCoordinator = false
             )
+            if (res.isFailure) {
+                pendingFollowUpMove = null
+            }
             _state.update {
                 it.copy(
                     isSubmittingAction = false,
@@ -733,95 +810,37 @@ class OnlineGameViewModel(
         }
     }
 
-    fun onPowerUpButtonTapped(type: PowerUpType) {
+    fun onBombSquareSelected(trackIndex: Int) {
         val current = _state.value
         val room = current.room ?: return
         val gs = current.gameUiState.gameState
         if (!current.isLocalPlayersTurn ||
             current.isSubmittingAction ||
-            gs.mode != GameModeId.POWER_UP ||
-            gs.phase != TurnPhase.AWAITING_ROLL ||
-            type !in gs.activePlayer.heldPowerUps
+            gs.phase != TurnPhase.AWAITING_BOMB_PLACEMENT
         ) return
+        val pending = gs.powerUpState.pendingBombPlacement ?: return
+        if (trackIndex !in pending.validTrackIndices) return
 
-        if (current.gameUiState.powerUpTargeting?.powerUpType == type) {
-            onCancelPowerUpTargeting()
-            return
-        }
-
-        val engine = LudoEngine(RuleSetRegistry.forMode(gs.mode))
-        when (type) {
-            PowerUpType.DOUBLE_DICE -> {
-                if (gs.activePlayer.doubleDiceActive) return
-                submitPowerUp(room.turnSeq, BotPowerUpAction.UseDoubleDice)
-            }
-            PowerUpType.SHIELD -> {
-                val validIds = engine.computeValidShieldTokenIds(gs, gs.activePlayer.color)
-                if (validIds.size == 1) {
-                    submitPowerUp(room.turnSeq, BotPowerUpAction.UseShield(validIds.first()))
-                } else if (validIds.isNotEmpty()) {
-                    _state.update {
-                        it.copy(
-                            gameUiState = it.gameUiState.copy(
-                                powerUpTargeting = PowerUpTargetingState.ShieldTarget(validIds)
-                            )
-                        )
-                    }
-                }
-            }
-            PowerUpType.BOMB_TRAP -> {
-                val validSquares = engine.computeValidBombSquares(gs, gs.activePlayer.color)
-                if (validSquares.isNotEmpty()) {
-                    _state.update {
-                        it.copy(
-                            gameUiState = it.gameUiState.copy(
-                                powerUpTargeting = PowerUpTargetingState.BombPlacement(validSquares)
-                            )
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    fun onCancelPowerUpTargeting() {
-        _state.update {
-            it.copy(gameUiState = it.gameUiState.copy(powerUpTargeting = null))
-        }
-    }
-
-    fun onShieldTokenSelected(tokenId: Int) {
-        val room = _state.value.room ?: return
-        if (!_state.value.isLocalPlayersTurn) return
-        submitPowerUp(room.turnSeq, BotPowerUpAction.UseShield(tokenId))
-    }
-
-    fun onBombSquareSelected(trackIndex: Int) {
-        val room = _state.value.room ?: return
-        if (!_state.value.isLocalPlayersTurn) return
-        submitPowerUp(room.turnSeq, BotPowerUpAction.UseBombTrap(trackIndex))
-    }
-
-    private fun submitPowerUp(expectedTurnSeq: Int, action: BotPowerUpAction) {
         viewModelScope.launch {
             _state.update {
                 it.copy(
                     isSubmittingAction = true,
+                    errorMessage = null,
                     gameUiState = it.gameUiState.copy(powerUpTargeting = null)
                 )
             }
-            val res = roomRepo.submitPowerUpAction(
+            val res = roomRepo.submitBombPlacement(
                 roomCode = roomCode,
                 actorUid = uid,
-                expectedTurnSeq = expectedTurnSeq,
-                action = action,
+                expectedTurnSeq = room.turnSeq,
+                trackIndex = trackIndex,
                 asBotCoordinator = false
             )
             _state.update {
                 it.copy(
                     isSubmittingAction = false,
                     errorMessage = res.exceptionOrNull()?.let { err ->
-                        friendlyNetworkErrorMessage(err, "Could not activate power-up. Please try again.")
+                        friendlyNetworkErrorMessage(err, "Could not place Bomb Trap. Please try again.")
                     }
                 )
             }
@@ -860,27 +879,21 @@ class OnlineGameViewModel(
         _state.update { it.copy(gameUiState = it.gameUiState.copy(allTokensHomeCelebration = null)) }
     }
 
-    private fun showPowerUpBanner(
-        type: PowerUpType?,
-        isExplosion: Boolean = false,
-        eyebrow: String,
-        title: String,
-        detail: String,
-        durationMs: Long
+    fun showTopToast(
+        text: String,
+        tone: TopToastTone = TopToastTone.NEUTRAL,
+        durationMs: Long = 1500L
     ) {
-        powerUpBannerCounter += 1
-        val key = powerUpBannerCounter
-        powerUpBannerJob?.cancel()
-        powerUpBannerJob = viewModelScope.launch {
+        topToastCounter += 1
+        val key = topToastCounter
+        topToastJob?.cancel()
+        topToastJob = viewModelScope.launch {
             _state.update {
                 it.copy(
                     gameUiState = it.gameUiState.copy(
-                        activePowerUpBanner = PowerUpBannerState(
-                            type = type,
-                            isExplosion = isExplosion,
-                            eyebrow = eyebrow,
-                            title = title,
-                            detail = detail,
+                        topToast = TopToastMessage(
+                            text = text,
+                            tone = tone,
                             triggerKey = key
                         )
                     )
@@ -888,8 +901,8 @@ class OnlineGameViewModel(
             }
             delay(durationMs)
             _state.update { curr ->
-                if (curr.gameUiState.activePowerUpBanner?.triggerKey == key) {
-                    curr.copy(gameUiState = curr.gameUiState.copy(activePowerUpBanner = null))
+                if (curr.gameUiState.topToast?.triggerKey == key) {
+                    curr.copy(gameUiState = curr.gameUiState.copy(topToast = null))
                 } else curr
             }
         }
@@ -902,6 +915,7 @@ class OnlineGameViewModel(
         autoSingleMoveJob?.cancel()
         bannerJob?.cancel()
         powerUpBannerJob?.cancel()
+        topToastJob?.cancel()
         timerLoopJob?.cancel()
         heartbeatJob?.cancel()
     }

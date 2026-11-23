@@ -39,8 +39,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -52,18 +51,7 @@ import com.example.ui.components.CartoonButton
 import com.example.ui.components.CartoonCard
 import com.example.ui.components.CartoonIconButton
 import com.example.ui.online.OnlineAuthUiState
-import com.example.ui.theme.CobaltDark
-import com.example.ui.theme.CobaltPrimary
-import com.example.ui.theme.CoralPink
-import com.example.ui.theme.CreamBackground
-import com.example.ui.theme.InkDark
-import com.example.ui.theme.InkMuted
-import com.example.ui.theme.MintGreen
-import com.example.ui.theme.MintGreenDark
-import com.example.ui.theme.OutlineSoft
-import com.example.ui.theme.SkyTopTint
-import com.example.ui.theme.SunnyGold
-import com.example.ui.theme.SunnyGoldDark
+import com.example.ui.theme.LocalLudoTheme
 
 /**
  * Login & Guest Upgrade screen for Online Multiplayer and Global Leaderboard.
@@ -77,15 +65,23 @@ fun OnlineAuthScreen(
     onContinueAsGuest: (String) -> Unit,
     onBackClick: () -> Unit
 ) {
+    val theme = LocalLudoTheme.current
     val activity = LocalContext.current as? Activity
     var guestNickname by rememberSaveable(authState.guestProfile.nickname) {
         mutableStateOf(authState.guestProfile.nickname)
     }
 
+    val upgradeBg = lerp(theme.surface, theme.yellow, if (theme.isDarkSurface) 0.18f else 0.14f)
+    val upgradeIconTint = theme.accessibleAccentOn(theme.yellow, upgradeBg)
+    val blueOnSurface = theme.accessibleAccentOn(theme.blue, theme.surface)
+    val greenOnSurface = theme.accessibleAccentOn(theme.green, theme.surface)
+    val errorBg = lerp(theme.surface, theme.red, if (theme.isDarkSurface) 0.22f else 0.10f)
+    val errorTextColor = theme.accessibleAccentOn(theme.red, errorBg)
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(SkyTopTint, CreamBackground)))
+            .background(theme.bg)
             .safeDrawingPadding()
             .testTag("online_auth_screen"),
         contentAlignment = Alignment.TopCenter
@@ -112,7 +108,7 @@ fun OnlineAuthScreen(
                 Text(
                     text = stringResource(R.string.online_auth_title),
                     style = MaterialTheme.typography.headlineMedium,
-                    color = InkDark
+                    color = theme.text
                 )
             }
 
@@ -122,9 +118,9 @@ fun OnlineAuthScreen(
             if (authState.hasGuestStatsToUpgrade) {
                 CartoonCard(
                     modifier = Modifier.fillMaxWidth(),
-                    borderColor = SunnyGoldDark,
-                    containerColor = Color(0xFFFFF8DF),
-                    cornerRadius = 24.dp
+                    borderColor = theme.yellow.copy(alpha = 0.75f),
+                    containerColor = upgradeBg,
+                    cornerRadius = 22.dp
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -133,14 +129,14 @@ fun OnlineAuthScreen(
                         Icon(
                             imageVector = Icons.Filled.Upgrade,
                             contentDescription = null,
-                            tint = SunnyGoldDark,
+                            tint = upgradeIconTint,
                             modifier = Modifier.size(32.dp)
                         )
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = stringResource(R.string.online_upgrade_guest_title),
                                 style = MaterialTheme.typography.titleMedium,
-                                color = InkDark,
+                                color = theme.surfaceText,
                                 fontWeight = FontWeight.ExtraBold
                             )
                             Text(
@@ -150,7 +146,7 @@ fun OnlineAuthScreen(
                                     "Upgrade Guest \"${authState.guestProfile.nickname}\" to a Google Account to unlock online multiplayer rooms and the global leaderboard."
                                 },
                                 style = MaterialTheme.typography.bodySmall,
-                                color = InkMuted
+                                color = theme.surfaceMutedText
                             )
                         }
                     }
@@ -161,8 +157,8 @@ fun OnlineAuthScreen(
             // Primary Google Sign-In Card
             CartoonCard(
                 modifier = Modifier.fillMaxWidth(),
-                borderColor = CobaltPrimary,
-                cornerRadius = 28.dp
+                borderColor = theme.blue.copy(alpha = 0.55f),
+                cornerRadius = 26.dp
             ) {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
@@ -171,21 +167,21 @@ fun OnlineAuthScreen(
                     Icon(
                         imageVector = Icons.Filled.Public,
                         contentDescription = null,
-                        tint = CobaltPrimary,
+                        tint = blueOnSurface,
                         modifier = Modifier.size(48.dp)
                     )
                     Spacer(Modifier.height(10.dp))
                     Text(
                         text = stringResource(R.string.online_google_card_title),
                         style = MaterialTheme.typography.headlineSmall,
-                        color = InkDark,
+                        color = theme.surfaceText,
                         textAlign = TextAlign.Center
                     )
                     Spacer(Modifier.height(6.dp))
                     Text(
                         text = subtitleOverride ?: stringResource(R.string.online_google_card_desc),
                         style = MaterialTheme.typography.bodyMedium,
-                        color = InkMuted,
+                        color = theme.surfaceMutedText,
                         textAlign = TextAlign.Center
                     )
                     Spacer(Modifier.height(14.dp))
@@ -210,7 +206,7 @@ fun OnlineAuthScreen(
 
                     if (authState.isSigningIn) {
                         CircularProgressIndicator(
-                            color = CobaltPrimary,
+                            color = theme.blue,
                             modifier = Modifier.padding(vertical = 10.dp)
                         )
                     } else {
@@ -223,8 +219,8 @@ fun OnlineAuthScreen(
                             onClick = { if (activity != null) onGoogleSignIn(activity) },
                             tag = "google_sign_in_button",
                             icon = Icons.Filled.AccountCircle,
-                            containerColor = CobaltPrimary,
-                            lipColor = CobaltDark,
+                            containerColor = theme.primaryActionBg,
+                            contentColor = theme.onPrimaryAction,
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
@@ -233,14 +229,14 @@ fun OnlineAuthScreen(
                         Spacer(Modifier.height(12.dp))
                         Surface(
                             shape = RoundedCornerShape(14.dp),
-                            color = CoralPink.copy(alpha = 0.12f),
-                            border = BorderStroke(1.5.dp, CoralPink),
+                            color = errorBg,
+                            border = BorderStroke(1.5.dp, theme.red),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
                                 text = err,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = CoralPink,
+                                color = errorTextColor,
                                 modifier = Modifier.padding(12.dp)
                             )
                         }
@@ -253,7 +249,6 @@ fun OnlineAuthScreen(
             // Play as Guest Card (nickname only, no leaderboard, upgradeable anytime)
             CartoonCard(
                 modifier = Modifier.fillMaxWidth(),
-                borderColor = OutlineSoft,
                 cornerRadius = 24.dp
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
@@ -264,20 +259,20 @@ fun OnlineAuthScreen(
                         Icon(
                             imageVector = Icons.Filled.Person,
                             contentDescription = null,
-                            tint = MintGreenDark,
+                            tint = greenOnSurface,
                             modifier = Modifier.size(24.dp)
                         )
                         Text(
                             text = stringResource(R.string.online_guest_title),
                             style = MaterialTheme.typography.titleLarge,
-                            color = InkDark
+                            color = theme.surfaceText
                         )
                     }
                     Spacer(Modifier.height(4.dp))
                     Text(
                         text = stringResource(R.string.online_guest_desc),
                         style = MaterialTheme.typography.bodySmall,
-                        color = InkMuted
+                        color = theme.surfaceMutedText
                     )
                     Spacer(Modifier.height(12.dp))
                     OutlinedTextField(
@@ -296,8 +291,7 @@ fun OnlineAuthScreen(
                         onClick = { onContinueAsGuest(guestNickname) },
                         tag = "continue_as_guest_button",
                         icon = Icons.Filled.Person,
-                        containerColor = MintGreen,
-                        lipColor = MintGreenDark,
+                        containerColor = theme.green,
                         minHeight = 52.dp,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -315,10 +309,14 @@ private fun FeatureBadge(
     label: String,
     modifier: Modifier = Modifier
 ) {
+    val theme = LocalLudoTheme.current
+    val badgeBg = lerp(theme.surface, theme.blue, if (theme.isDarkSurface) 0.20f else 0.10f)
+    val iconTint = theme.accessibleAccentOn(theme.blue, badgeBg)
+
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(14.dp),
-        color = CobaltPrimary.copy(alpha = 0.10f)
+        color = badgeBg
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
@@ -328,14 +326,14 @@ private fun FeatureBadge(
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = CobaltPrimary,
+                tint = iconTint,
                 modifier = Modifier.size(16.dp)
             )
             Spacer(Modifier.width(6.dp))
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelMedium,
-                color = InkDark
+                color = theme.surfaceText
             )
         }
     }

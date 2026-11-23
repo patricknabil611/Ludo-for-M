@@ -16,8 +16,8 @@ android {
     applicationId = "com.aistudio.ludoform.qwrtxz"
     minSdk = 24
     targetSdk = 36
-    versionCode = 3
-    versionName = "3.0"
+    versionCode = 5
+    versionName = "28.05.92.7"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }

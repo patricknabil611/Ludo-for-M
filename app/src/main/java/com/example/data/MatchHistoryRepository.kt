@@ -170,7 +170,7 @@ class MatchHistoryRepository(
     private fun parseCloudDoc(doc: DocumentSnapshot): MatchHistoryEntry? {
         if (!doc.exists()) return null
         val est = DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-        val mode = GameModeId.entries.firstOrNull { it.name == doc.getString("mode") } ?: GameModeId.CLASSIC
+        val mode = GameModeId.fromLegacyName(doc.getString("mode")).first
         val color = PlayerColor.entries.firstOrNull { it.name == doc.getString("winnerColor") } ?: PlayerColor.RED
         val ts = doc.getTimestamp("createdAt", est) ?: Timestamp.now()
         val rawPlayers = doc.get("players") as? List<*>
@@ -239,7 +239,7 @@ class MatchHistoryRepository(
             val rank = if (rankIndex >= 0) rankIndex + 1 else 0
             val won = when {
                 targetColor == null -> false
-                finalState.mode == GameModeId.TEAMS_2V2 ->
+                finalState.isTeamMatch ->
                     targetColor == winnerColor || targetColor == winnerColor.opposite()
                 else -> targetColor == winnerColor
             }
@@ -357,8 +357,7 @@ class MatchHistoryRepository(
 
                     MatchHistoryEntry(
                         id = o.optString("id", "local_$idx"),
-                        mode = GameModeId.entries.firstOrNull { it.name == o.optString("mode") }
-                            ?: GameModeId.CLASSIC,
+                        mode = GameModeId.fromLegacyName(o.optString("mode")).first,
                         onlineMatch = o.optBoolean("onlineMatch", false),
                         roomCode = o.optString("roomCode", ""),
                         winnerName = o.optString("winnerName", "Player"),

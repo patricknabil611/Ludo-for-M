@@ -8,6 +8,8 @@ import com.example.engine.GameModeId
 import com.example.engine.GameState
 import com.example.engine.LegalMove
 import com.example.engine.LudoEngine
+import com.example.engine.MatchFormat
+import com.example.engine.PendingBombPlacement
 import com.example.engine.PendingPowerUpRespawn
 import com.example.engine.PlayerColor
 import com.example.engine.PlayerControllerType
@@ -19,20 +21,25 @@ import com.example.engine.PowerUpType
 import com.example.engine.RuleSetRegistry
 import com.example.engine.Token
 import com.example.engine.TurnPhase
+import com.example.engine.TurnTimerOption
 
 /**
- * Lossless native Firestore Map <-> Ludo GameState serializer.
- * Stores all fields as native Firestore Maps/Lists/Numbers/Strings (no JSON strings).
+ * Lossless native Firestore Map <-> Ludo GameState serializer (v2.1).
+ * Stores all fields as native Firestore Maps/Lists/Numbers/Strings (no JSON strings),
+ * and seamlessly migrates legacy v1/v2.0 mode and power-up IDs on read.
  */
 object GameStateFirestoreMapper {
 
     fun toFirestoreMap(state: GameState): Map<String, Any> {
         val map = mutableMapOf<String, Any>(
             "mode" to state.mode.name,
+            "matchFormat" to state.matchFormat.name,
+            "turnTimerSeconds" to state.turnTimerSeconds,
             "activePlayerIndex" to state.activePlayerIndex,
             "phase" to state.phase.name,
             "wasDiceDoubled" to state.wasDiceDoubled,
             "wasDoubleDiceRoll" to state.wasDoubleDiceRoll,
+            "wasGoldenDiceRoll" to state.wasGoldenDiceRoll,
             "consecutiveSixes" to state.consecutiveSixes,
             "finishOrder" to state.finishOrder.map { it.name },
             "eliminatedOrder" to state.eliminatedOrder.map { it.name },
@@ -46,13 +53,16 @@ object GameStateFirestoreMapper {
             "powerUpState" to powerUpToMap(state.powerUpState),
             "rolledDice" to state.rolledDice,
             "remainingDice" to state.remainingDice,
-            "earnedBonusRollThisTurn" to state.earnedBonusRollThisTurn
+            "earnedBonusRollThisTurn" to state.earnedBonusRollThisTurn,
+            "pendingBonusRolls" to state.pendingBonusRolls,
+            "lastHomeUnlockEventId" to state.lastHomeUnlockEventId
         )
         state.lastDiceValue?.let { map["lastDiceValue"] = it }
         state.lastRawDiceValue?.let { map["lastRawDiceValue"] = it }
         state.lastSecondDiceValue?.let { map["lastSecondDiceValue"] = it }
         state.selectedDieValue?.let { map["selectedDieValue"] = it }
         state.winningTeamLabel?.let { map["winningTeamLabel"] = it }
+        state.lastHomeUnlockedColor?.let { map["lastHomeUnlockedColor"] = it.name }
         return map
     }
 
@@ -62,13 +72,20 @@ object GameStateFirestoreMapper {
         val players = playersRaw.mapNotNull { (it as? Map<*, *>)?.let(::playerFromMap) }
         if (players.size < 2) return null
 
-        val mode = GameModeId.entries.firstOrNull { it.name == raw["mode"] as? String } ?: GameModeId.CLASSIC
+        val (mode, legacyFormat) = GameModeId.fromLegacyName(raw["mode"] as? String)
+        val matchFormat = legacyFormat ?: MatchFormat.fromRaw(
+            raw = raw["matchFormat"] as? String,
+            fallbackPlayerCount = players.size
+        )
+        val turnTimerSeconds = (raw["turnTimerSeconds"] as? Number)?.toInt()
+            ?: TurnTimerOption.DEFAULT_SECONDS
         val phase = TurnPhase.entries.firstOrNull { it.name == raw["phase"] as? String } ?: TurnPhase.AWAITING_ROLL
         val activeIdx = ((raw["activePlayerIndex"] as? Number)?.toInt() ?: 0).coerceIn(0, players.lastIndex)
         val lastDice = (raw["lastDiceValue"] as? Number)?.toInt()
         val lastRawDice = (raw["lastRawDiceValue"] as? Number)?.toInt()
         val lastSecondDice = (raw["lastSecondDiceValue"] as? Number)?.toInt()
         val wasDoubleDice = (raw["wasDoubleDiceRoll"] as? Boolean) ?: false
+        val wasGoldenDice = (raw["wasGoldenDiceRoll"] as? Boolean) ?: false
 
         val finishOrder = (raw["finishOrder"] as? List<*>).orEmpty().mapNotNull { name ->
             PlayerColor.entries.firstOrNull { it.name == name as? String }
@@ -83,9 +100,17 @@ object GameStateFirestoreMapper {
             .mapNotNull { (it as? Number)?.toInt() }
         val selectedDieValue = (raw["selectedDieValue"] as? Number)?.toInt()
         val earnedBonusRoll = (raw["earnedBonusRollThisTurn"] as? Boolean) ?: false
+        val pendingBonusRolls = (raw["pendingBonusRolls"] as? Number)?.toInt()
+            ?: if (earnedBonusRoll) 1 else 0
+        val lastHomeUnlockedColor = PlayerColor.entries.firstOrNull {
+            it.name == raw["lastHomeUnlockedColor"] as? String
+        }
+        val lastHomeUnlockEventId = (raw["lastHomeUnlockEventId"] as? Number)?.toInt() ?: 0
 
         val baseState = GameState(
             mode = mode,
+            matchFormat = matchFormat,
+            turnTimerSeconds = turnTimerSeconds,
             players = players,
             activePlayerIndex = activeIdx,
             phase = phase,
@@ -96,8 +121,10 @@ object GameStateFirestoreMapper {
             remainingDice = remainingDice,
             selectedDieValue = selectedDieValue,
             earnedBonusRollThisTurn = earnedBonusRoll,
+            pendingBonusRolls = pendingBonusRolls,
             wasDiceDoubled = (raw["wasDiceDoubled"] as? Boolean) ?: false,
             wasDoubleDiceRoll = wasDoubleDice,
+            wasGoldenDiceRoll = wasGoldenDice,
             consecutiveSixes = (raw["consecutiveSixes"] as? Number)?.toInt() ?: 0,
             legalMoves = emptyList(),
             finishOrder = finishOrder,
@@ -109,13 +136,15 @@ object GameStateFirestoreMapper {
             winningTeamLabel = raw["winningTeamLabel"] as? String,
             chaosState = chaosFromMap(raw["chaosState"] as? Map<*, *>),
             powerUpState = powerUpFromMap(raw["powerUpState"] as? Map<*, *>),
-            lastEventMessage = (raw["lastEventMessage"] as? String).orEmpty()
+            lastEventMessage = (raw["lastEventMessage"] as? String).orEmpty(),
+            lastHomeUnlockedColor = lastHomeUnlockedColor,
+            lastHomeUnlockEventId = lastHomeUnlockEventId
         )
 
         // Recompute authoritative legal moves deterministically when awaiting a move
         val computedMoves: List<LegalMove> = if (phase == TurnPhase.AWAITING_MOVE) {
-            val engine = LudoEngine(RuleSetRegistry.forMode(mode))
-            val allowBaseOverride = wasDoubleDice && lastRawDice == 6 && lastSecondDice == 6
+            val engine = LudoEngine(RuleSetRegistry.forMode(mode, matchFormat))
+            val allowBaseOverride = baseState.wasDiceDoubled && lastRawDice == 6
             when {
                 remainingDice.isNotEmpty() ->
                     engine.computeLegalMovesForDice(baseState, remainingDice, allowBaseEntryOverride = allowBaseOverride)
@@ -155,6 +184,7 @@ object GameStateFirestoreMapper {
         "score" to player.score,
         "eliminated" to player.isEliminated,
         "diceStormCharges" to player.diceStormCharges,
+        "goldenDiceCharges" to player.goldenDiceCharges,
         "heldPowerUps" to player.heldPowerUps.map { it.name },
         "doubleDiceActive" to player.doubleDiceActive,
         "capturesMade" to player.capturesMade,
@@ -180,7 +210,7 @@ object GameStateFirestoreMapper {
             (item as? Map<*, *>)?.let { tokenFromMap(it, idx, color) }
         }
         val held = (raw["heldPowerUps"] as? List<*>).orEmpty().mapNotNull { name ->
-            PowerUpType.entries.firstOrNull { it.name == name as? String }
+            PowerUpType.fromLegacyName(name as? String)
         }
         return PlayerState(
             setup = setup,
@@ -189,6 +219,7 @@ object GameStateFirestoreMapper {
             score = (raw["score"] as? Number)?.toInt() ?: 0,
             isEliminated = (raw["eliminated"] as? Boolean) ?: false,
             diceStormCharges = (raw["diceStormCharges"] as? Number)?.toInt() ?: 0,
+            goldenDiceCharges = (raw["goldenDiceCharges"] as? Number)?.toInt() ?: 0,
             heldPowerUps = held,
             doubleDiceActive = (raw["doubleDiceActive"] as? Boolean) ?: false,
             capturesMade = (raw["capturesMade"] as? Number)?.toInt() ?: 0,
@@ -196,19 +227,24 @@ object GameStateFirestoreMapper {
         )
     }
 
-    private fun tokenToMap(token: Token): Map<String, Any> = mapOf(
-        "id" to token.id,
-        "progress" to token.progress,
-        "outerWrap51" to token.outerWrap51,
-        "shieldTurnsRemaining" to token.shieldTurnsRemaining
-    )
+    private fun tokenToMap(token: Token): Map<String, Any> {
+        val m = mutableMapOf<String, Any>(
+            "id" to token.id,
+            "progress" to token.progress,
+            "outerWrap51" to token.outerWrap51,
+            "shieldTurnsRemaining" to token.shieldTurnsRemaining
+        )
+        token.jointPartnerId?.let { m["jointPartnerId"] = it }
+        return m
+    }
 
     private fun tokenFromMap(raw: Map<*, *>, fallbackId: Int, color: PlayerColor): Token = Token(
         id = (raw["id"] as? Number)?.toInt() ?: fallbackId,
         color = color,
         progress = (raw["progress"] as? Number)?.toInt() ?: Token.BASE_PROGRESS,
         outerWrap51 = (raw["outerWrap51"] as? Boolean) ?: false,
-        shieldTurnsRemaining = (raw["shieldTurnsRemaining"] as? Number)?.toInt() ?: 0
+        shieldTurnsRemaining = (raw["shieldTurnsRemaining"] as? Number)?.toInt() ?: 0,
+        jointPartnerId = (raw["jointPartnerId"] as? Number)?.toInt()
     )
 
     private fun chaosToMap(chaos: ChaosState): Map<String, Any> {
@@ -242,29 +278,41 @@ object GameStateFirestoreMapper {
         )
     }
 
-    private fun powerUpToMap(pu: PowerUpState): Map<String, Any> = mapOf(
-        "tiles" to pu.tiles.map {
-            mapOf("id" to it.id, "trackIndex" to it.trackIndex, "type" to it.type.name)
-        },
-        "pendingRespawns" to pu.pendingRespawns.map {
-            mapOf("roundsRemaining" to it.roundsRemaining)
-        },
-        "bombs" to pu.bombs.map {
-            mapOf(
-                "id" to it.id,
-                "ownerColor" to it.ownerColor.name,
-                "trackIndex" to it.trackIndex,
-                "roundsRemaining" to it.roundsRemaining
+    private fun powerUpToMap(pu: PowerUpState): Map<String, Any> {
+        val m = mutableMapOf<String, Any>(
+            "tiles" to pu.tiles.map {
+                mapOf("id" to it.id, "trackIndex" to it.trackIndex, "type" to it.type.name)
+            },
+            "pendingRespawns" to pu.pendingRespawns.map {
+                mapOf("roundsRemaining" to it.roundsRemaining)
+            },
+            "bombs" to pu.bombs.map {
+                mapOf(
+                    "id" to it.id,
+                    "ownerColor" to it.ownerColor.name,
+                    "trackIndex" to it.trackIndex,
+                    "roundsRemaining" to it.roundsRemaining
+                )
+            },
+            "nextEntityId" to pu.nextEntityId,
+            "roundsUntilNextSpawn" to pu.roundsUntilNextSpawn
+        )
+        pu.pendingBombPlacement?.let { pending ->
+            m["pendingBombPlacement"] = mapOf(
+                "ownerColor" to pending.ownerColor.name,
+                "sourceTokenColor" to pending.sourceTokenColor.name,
+                "sourceTokenId" to pending.sourceTokenId,
+                "validTrackIndices" to pending.validTrackIndices
             )
-        },
-        "nextEntityId" to pu.nextEntityId
-    )
+        }
+        return m
+    }
 
     private fun powerUpFromMap(raw: Map<*, *>?): PowerUpState {
         if (raw == null) return PowerUpState()
         val tiles = (raw["tiles"] as? List<*>).orEmpty().mapNotNull { item ->
             val m = item as? Map<*, *> ?: return@mapNotNull null
-            val type = PowerUpType.entries.firstOrNull { it.name == m["type"] as? String } ?: return@mapNotNull null
+            val type = PowerUpType.fromLegacyName(m["type"] as? String) ?: return@mapNotNull null
             PowerUpTile(
                 id = (m["id"] as? Number)?.toInt() ?: 0,
                 trackIndex = (m["trackIndex"] as? Number)?.toInt() ?: 0,
@@ -285,11 +333,27 @@ object GameStateFirestoreMapper {
                 roundsRemaining = (m["roundsRemaining"] as? Number)?.toInt() ?: 1
             )
         }
+        val pendingBomb = (raw["pendingBombPlacement"] as? Map<*, *>)?.let { pm ->
+            val owner = PlayerColor.entries.firstOrNull { it.name == pm["ownerColor"] as? String } ?: return@let null
+            val sourceColor = PlayerColor.entries.firstOrNull { it.name == pm["sourceTokenColor"] as? String } ?: owner
+            val sourceId = (pm["sourceTokenId"] as? Number)?.toInt() ?: 0
+            val validIndices = (pm["validTrackIndices"] as? List<*>).orEmpty()
+                .mapNotNull { (it as? Number)?.toInt() }
+            if (validIndices.isEmpty()) null else PendingBombPlacement(
+                ownerColor = owner,
+                sourceTokenColor = sourceColor,
+                sourceTokenId = sourceId,
+                validTrackIndices = validIndices
+            )
+        }
         return PowerUpState(
             tiles = tiles,
             pendingRespawns = respawns,
             bombs = bombs,
-            nextEntityId = (raw["nextEntityId"] as? Number)?.toInt() ?: 1
+            nextEntityId = (raw["nextEntityId"] as? Number)?.toInt() ?: 1,
+            pendingBombPlacement = pendingBomb,
+            roundsUntilNextSpawn = (raw["roundsUntilNextSpawn"] as? Number)?.toInt()
+                ?: PowerUpState.RESPAWN_ROUNDS
         )
     }
 }

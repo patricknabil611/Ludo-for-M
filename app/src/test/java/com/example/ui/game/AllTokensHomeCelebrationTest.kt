@@ -147,7 +147,8 @@ class AllTokensHomeCelebrationTest {
     @Test
     fun detectAllFourTokensHome_handlesTeams2v2PartnerContinuationAndTeamVictory() {
         val beforeFirstTeammate = GameState(
-            mode = GameModeId.TEAMS_2V2,
+            mode = GameModeId.CLASSIC,
+            matchFormat = com.example.engine.MatchFormat.TEAMS_2V2,
             players = listOf(
                 playerWithHomeCount(0, "Red", PlayerColor.RED, 3),
                 playerWithHomeCount(1, "Green", PlayerColor.GREEN, 1),

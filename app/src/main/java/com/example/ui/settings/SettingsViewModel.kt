@@ -6,20 +6,26 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.AppSettings
 import com.example.data.SettingsRepository
 import com.example.engine.GameModeId
+import com.example.ui.theme.LudoThemeId
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class SettingsViewModel(
-    private val repository: SettingsRepository
+    private val repository: SettingsRepository,
+    initialThemeId: LudoThemeId = LudoThemeId.DEFAULT
 ) : ViewModel() {
 
     val settings: StateFlow<AppSettings> = repository.settingsFlow.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000L),
-        initialValue = AppSettings()
+        initialValue = AppSettings(themeId = initialThemeId)
     )
+
+    fun setTheme(themeId: LudoThemeId) {
+        viewModelScope.launch { repository.setThemeId(themeId) }
+    }
 
     fun setSoundEffects(enabled: Boolean) {
         viewModelScope.launch { repository.setSoundEffectsEnabled(enabled) }
@@ -49,10 +55,13 @@ class SettingsViewModel(
         viewModelScope.launch { repository.setActiveOnlineRoomCode(roomCode) }
     }
 
-    class Factory(private val repository: SettingsRepository) : ViewModelProvider.Factory {
+    class Factory(
+        private val repository: SettingsRepository,
+        private val initialThemeId: LudoThemeId = LudoThemeId.DEFAULT
+    ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return SettingsViewModel(repository) as T
+            return SettingsViewModel(repository, initialThemeId) as T
         }
     }
 }

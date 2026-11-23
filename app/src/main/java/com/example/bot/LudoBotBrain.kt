@@ -9,14 +9,25 @@ import com.example.engine.Token
 import kotlin.random.Random
 
 /**
- * Pure Kotlin Ludo bot intelligence supporting Easy, Medium, and Hard difficulties.
- * Adapts to Power-Up mode (collecting tiles, shielding endangered tokens, placing bomb traps),
- * dynamic safe stars, portals, Teams 2v2, and Master locks.
+ * Pure Kotlin Ludo bot intelligence supporting Easy, Medium, and Hard difficulties across
+ * all 9 v2.1 modes and all 3 match formats.
+ *
+ * Core move priority order:
+ *   1. Finish (bring a token Home)
+ *   2. Capture opponent token(s)
+ *   3. Escape danger (reduce capture risk)
+ *   4. Land on safe / star square (or enter private home column)
+ *   5. Leave base with a 6
+ *   6. Advance furthest token
+ *
+ * Hard bots additionally chase Master unlock, form/preserve Blockades, aim for Arrow shortcuts,
+ * prioritize Magic item pickups, and place instant Bomb Traps directly ahead of rival tokens.
+ * Easy bots play more randomly.
  */
 class LudoBotBrain(
     private val random: Random = Random.Default,
     private val modeHeuristic: ModeBotHeuristic = DefaultModeBotHeuristic(),
-    private val powerUpAdvisor: PowerUpBotAdvisor = DefaultPowerUpBotAdvisor(random)
+    private val magicAdvisor: MagicItemBotAdvisor = DefaultMagicItemBotAdvisor(random)
 ) : BotDecisionEngine {
 
     override fun chooseMove(
@@ -35,16 +46,18 @@ class LudoBotBrain(
         }
     }
 
-    override fun choosePowerUpBeforeRoll(
+    override fun choosePendingBombSquare(
         state: GameState,
         ruleSet: LudoRuleSet,
+        validTrackIndices: List<Int>,
         difficulty: BotDifficulty
-    ): BotPowerUpAction? {
-        return powerUpAdvisor.choosePreRollAction(
+    ): Int {
+        return magicAdvisor.chooseBombSquare(
             state = state,
+            ownerColor = state.activePlayer.color,
             ruleSet = ruleSet,
-            difficulty = difficulty,
-            riskEvaluator = ::evaluateCaptureRisk
+            validTrackIndices = validTrackIndices,
+            difficulty = difficulty
         )
     }
 
@@ -58,7 +71,7 @@ class LudoBotBrain(
         legalMoves: List<LegalMove>
     ): LegalMove {
         return legalMoves.maxBy { move ->
-            scoreMediumMove(state, ruleSet, move) + random.nextDouble(0.0, 0.5)
+            scoreMediumMove(state, ruleSet, move) + random.nextDouble(0.0, 2.5)
         }
     }
 
@@ -78,21 +91,39 @@ class LudoBotBrain(
         move: LegalMove
     ): Double {
         var score = 0.0
-        score += move.capturedTokens.size * 120.0
 
+        // 1. Finish
         if (move.reachesHome) {
-            score += 95.0
-        } else if (isSafeDestination(state, move.color, move.toProgress, move.toOuterWrap51)) {
+            score += 240.0
+        }
+
+        // 2. Capture
+        if (move.capturedTokens.isNotEmpty()) {
+            score += 185.0 + (move.capturedTokens.size - 1) * 45.0
+        }
+
+        // 3. Escape danger
+        val riskBefore = evaluateCaptureRisk(state, move.color, move.fromProgress, ruleSet, move.fromOuterWrap51)
+        val riskAfter = evaluateCaptureRisk(state, move.color, move.toProgress, ruleSet, move.toOuterWrap51)
+        score += (riskBefore - riskAfter) * 115.0
+
+        // 4. Safe / star square or home column entry
+        if (!move.reachesHome && isSafeDestination(state, move.color, move.toProgress, move.toOuterWrap51)) {
+            score += 85.0
+        }
+
+        // 5. Leave base with 6
+        if (move.leavesBase) {
             score += 65.0
         }
 
-        if (move.leavesBase) {
-            score += 75.0
-        }
+        // 6. Advance furthest token
+        val effectiveProgress = if (move.toOuterWrap51) 51 else move.toProgress.coerceAtLeast(0)
+        score += effectiveProgress * 0.9
 
-        score += move.toProgress * 0.6
-        score += modeHeuristic.scoreMoveForMode(state, move, ruleSet) * 0.5
-        score += powerUpAdvisor.powerUpBonusScore(state, move, BotDifficulty.MEDIUM)
+        // Mode & Magic bonuses (moderate weight)
+        score += modeHeuristic.scoreMoveForMode(state, move, ruleSet, BotDifficulty.MEDIUM)
+        score += magicAdvisor.magicPickupScore(state, move, BotDifficulty.MEDIUM)
         return score
     }
 
@@ -106,9 +137,14 @@ class LudoBotBrain(
         val activeOnBoardCount = player?.tokens?.count { !it.isInBase && !it.isHome } ?: 0
         val movingToken = player?.tokens?.firstOrNull { it.id == move.tokenId }
 
-        // 1. Prioritize captures, especially high-progress opponent tokens
+        // 1. Finish (highest priority — permanently secures token + bonus roll)
+        if (move.reachesHome) {
+            score += 310.0 * move.tokenIds.size
+        }
+
+        // 2. Capture opponent token(s), valuing high-progress victims + bonus roll
         if (move.capturedTokens.isNotEmpty()) {
-            score += move.capturedTokens.size * 155.0
+            score += 230.0 + (move.capturedTokens.size - 1) * 65.0
             for (victim in move.capturedTokens) {
                 val victimProgress = state.playerByColor(victim.color)
                     ?.tokens
@@ -119,7 +155,7 @@ class LudoBotBrain(
             }
         }
 
-        // 2. Risk evaluation (if token is currently shielded, capture risk is 0!)
+        // 3. Escape danger (shielded tokens have 0 capture risk)
         val riskBefore = if (movingToken?.isShielded == true) {
             0.0
         } else {
@@ -142,45 +178,36 @@ class LudoBotBrain(
                 outerWrap51 = move.toOuterWrap51
             )
         }
-        val riskDelta = riskBefore - riskAfter
-        score += riskDelta * 85.0
+        score += (riskBefore - riskAfter) * 145.0
 
-        // 3. Reaching Home permanently secures the token
-        if (move.reachesHome) {
-            score += 135.0
-        }
-
-        // 4. Entering the safe private home column from the outer track
+        // 4. Safe / star square or entering private home column
         val entersHomeColumn = (move.fromOuterWrap51 || move.fromProgress <= Token.MAX_MAIN_TRACK_PROGRESS) &&
             !move.toOuterWrap51 &&
             move.toProgress in (Token.MAX_MAIN_TRACK_PROGRESS + 1)..(Token.HOME_PROGRESS - 1)
         if (entersHomeColumn) {
-            score += 88.0
-        }
-
-        // 5. Landing on a safe start or star square on the shared track
-        if (isSafeOuterTrackSquare(state, move.color, move.toProgress, move.toOuterWrap51)) {
-            score += 56.0
+            score += 112.0
+        } else if (isSafeOuterTrackSquare(state, move.color, move.toProgress, move.toOuterWrap51)) {
+            score += 92.0
         } else if (isSafeOuterTrackSquare(state, move.color, move.fromProgress, move.fromOuterWrap51) && riskAfter > 0.0) {
-            score -= 22.0
+            score -= 26.0
         }
 
-        // 6. Leaving base wisely
+        // 5. Leave base with 6
         if (move.leavesBase) {
             score += when (activeOnBoardCount) {
-                0 -> 95.0
-                1 -> 70.0
-                else -> 48.0
+                0 -> 96.0
+                1 -> 76.0
+                else -> 58.0
             }
         }
 
-        // 7. Forward progress toward Home
-        val effectiveProgress = if (move.toOuterWrap51) 51 else move.toProgress
-        score += effectiveProgress * 1.15
+        // 6. Advance furthest token toward Home
+        val effectiveProgress = if (move.toOuterWrap51) 51 else move.toProgress.coerceAtLeast(0)
+        score += effectiveProgress * 1.25
 
-        // 8. Mode-specific strategy and power-up collection scoring
-        score += modeHeuristic.scoreMoveForMode(state, move, ruleSet)
-        score += powerUpAdvisor.powerUpBonusScore(state, move, BotDifficulty.HARD)
+        // Mode-specific strategies (Blockades, Master unlock/Joint, Quick, Arrow, Timed, Chaos, Elimination)
+        score += modeHeuristic.scoreMoveForMode(state, move, ruleSet, BotDifficulty.HARD)
+        score += magicAdvisor.magicPickupScore(state, move, BotDifficulty.HARD)
 
         return score
     }
@@ -208,7 +235,7 @@ class LudoBotBrain(
         for (opponent in state.players) {
             if (opponent.isEliminated) continue
             if (opponent.color == tokenColor || opponent.color == partnerColor) continue
-            if (opponent.color in state.finishOrder) continue
+            if (!ruleSet.teamsMode && opponent.color in state.finishOrder) continue
 
             for (oppToken in opponent.tokens) {
                 if (!oppToken.isOnMainTrack) continue

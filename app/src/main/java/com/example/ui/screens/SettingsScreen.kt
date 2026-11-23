@@ -1,12 +1,18 @@
 package com.example.ui.screens
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -25,6 +31,8 @@ import androidx.compose.material.icons.automirrored.filled.VolumeDown
 import androidx.compose.material.icons.automirrored.filled.VolumeMute
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Vibration
 import androidx.compose.material3.Icon
@@ -39,13 +47,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -54,25 +66,24 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.data.AppSettings
 import com.example.ui.components.CartoonButton
 import com.example.ui.components.CartoonCard
 import com.example.ui.components.CartoonIconButton
-import com.example.ui.theme.CobaltDark
-import com.example.ui.theme.CobaltPrimary
-import com.example.ui.theme.CoralPink
-import com.example.ui.theme.CreamBackground
-import com.example.ui.theme.CreamSurfaceVariant
-import com.example.ui.theme.InkDark
-import com.example.ui.theme.InkMuted
-import com.example.ui.theme.MintGreen
-import com.example.ui.theme.SkyTopTint
+import com.example.ui.theme.AllLudoThemes
+import com.example.ui.theme.BaseCornerStyle
+import com.example.ui.theme.LocalLudoTheme
+import com.example.ui.theme.LudoTheme
+import com.example.ui.theme.LudoThemeId
+import com.example.ui.theme.ludoShadow
 import kotlin.math.roundToInt
 
 @Composable
 fun SettingsScreen(
     settings: AppSettings,
+    onSelectTheme: (LudoThemeId) -> Unit = {},
     onToggleSoundEffects: (Boolean) -> Unit,
     onSoundEffectsVolumeLiveChange: (Float) -> Unit = {},
     onSoundEffectsVolumeCommit: (Float) -> Unit = {},
@@ -80,12 +91,12 @@ fun SettingsScreen(
     onReplayTutorialClick: () -> Unit = {},
     onBackClick: () -> Unit
 ) {
+    val theme = LocalLudoTheme.current
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(colors = listOf(SkyTopTint, CreamBackground))
-            )
+            .background(theme.bg)
             .safeDrawingPadding()
             .testTag("settings_screen"),
         contentAlignment = Alignment.TopCenter
@@ -95,7 +106,7 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .widthIn(max = 560.dp)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 16.dp),
+                .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Row(
@@ -112,9 +123,15 @@ fun SettingsScreen(
                 Text(
                     text = stringResource(R.string.settings_title),
                     style = MaterialTheme.typography.headlineLarge,
-                    color = InkDark
+                    color = theme.text
                 )
             }
+
+            // Theme Picker Section (2x2 preview cards)
+            ThemePickerSection(
+                selectedThemeId = settings.themeId,
+                onSelectTheme = onSelectTheme
+            )
 
             // Sound Effects Toggle + Volume Slider Card
             SettingAudioCard(
@@ -125,8 +142,8 @@ fun SettingsScreen(
                         else -> Icons.AutoMirrored.Filled.VolumeUp
                     }
                 },
-                iconTint = CobaltPrimary,
-                sliderAccent = CobaltPrimary,
+                iconTint = theme.accessibleAccentOn(theme.blue, theme.surface),
+                sliderAccent = theme.accessibleAccentOn(theme.blue, theme.surface),
                 title = stringResource(R.string.settings_sound_effects),
                 subtitle = stringResource(R.string.settings_sound_effects_desc),
                 volumeLabel = stringResource(R.string.settings_sound_effects_volume),
@@ -141,7 +158,7 @@ fun SettingsScreen(
 
             SettingToggleRow(
                 icon = Icons.Filled.Vibration,
-                iconTint = CoralPink,
+                iconTint = theme.accessibleAccentOn(theme.red, theme.surface),
                 title = stringResource(R.string.settings_vibration),
                 subtitle = stringResource(R.string.settings_vibration_desc),
                 checked = settings.vibrationEnabled,
@@ -150,26 +167,24 @@ fun SettingsScreen(
             )
 
             // Replay Interactive Tutorial Card
-            CartoonCard(
-                modifier = Modifier.fillMaxWidth(),
-                borderColor = CobaltPrimary.copy(alpha = 0.4f)
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            CartoonCard(modifier = Modifier.fillMaxWidth()) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
+                        val accent = theme.accessibleAccentOn(theme.blue, theme.surface)
                         Box(
                             modifier = Modifier
                                 .size(46.dp)
                                 .clip(CircleShape)
-                                .background(CobaltPrimary.copy(alpha = 0.14f)),
+                                .background(accent.copy(alpha = 0.14f)),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.Filled.School,
                                 contentDescription = null,
-                                tint = CobaltPrimary,
+                                tint = accent,
                                 modifier = Modifier.size(24.dp)
                             )
                         }
@@ -177,12 +192,12 @@ fun SettingsScreen(
                             Text(
                                 text = stringResource(R.string.settings_tutorial_title),
                                 style = MaterialTheme.typography.titleLarge,
-                                color = InkDark
+                                color = theme.surfaceText
                             )
                             Text(
                                 text = stringResource(R.string.settings_tutorial_desc),
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = InkMuted
+                                color = theme.surfaceMutedText
                             )
                         }
                     }
@@ -192,23 +207,253 @@ fun SettingsScreen(
                         onClick = onReplayTutorialClick,
                         tag = "settings_replay_tutorial_button",
                         icon = Icons.Filled.School,
-                        containerColor = CobaltPrimary,
-                        lipColor = CobaltDark,
                         minHeight = 48.dp,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
             }
 
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(4.dp))
 
             Text(
                 text = "Ludo for M • Pass & Play, Bots & Online",
                 style = MaterialTheme.typography.labelMedium,
-                color = InkMuted,
+                color = theme.mutedText,
                 modifier = Modifier.align(Alignment.CenterHorizontally)
             )
             Spacer(Modifier.height(4.dp))
+        }
+    }
+}
+
+@Composable
+private fun ThemePickerSection(
+    selectedThemeId: LudoThemeId,
+    onSelectTheme: (LudoThemeId) -> Unit
+) {
+    val activeTheme = LocalLudoTheme.current
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("settings_theme_section"),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(horizontal = 2.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Palette,
+                contentDescription = null,
+                tint = activeTheme.accessibleAccentOn(activeTheme.blue, activeTheme.bg),
+                modifier = Modifier.size(20.dp)
+            )
+            Text(
+                text = "Theme",
+                style = MaterialTheme.typography.titleLarge,
+                color = activeTheme.text,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        val rows = AllLudoThemes.chunked(2)
+        rows.forEach { pair ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                pair.forEach { candidate ->
+                    ThemePreviewCard(
+                        previewTheme = candidate,
+                        selected = candidate.id == selectedThemeId,
+                        activeTheme = activeTheme,
+                        onClick = { onSelectTheme(candidate.id) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ThemePreviewCard(
+    previewTheme: LudoTheme,
+    selected: Boolean,
+    activeTheme: LudoTheme,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val borderColor by animateColorAsState(
+        targetValue = if (selected) activeTheme.blue else activeTheme.chipLine,
+        animationSpec = tween(250),
+        label = "themeCardBorder"
+    )
+    val shape = RoundedCornerShape(18.dp)
+
+    Surface(
+        modifier = modifier
+            .ludoShadow(activeTheme.cardShadow, 18.dp)
+            .clip(shape)
+            .border(
+                width = if (selected) 2.5.dp else 1.dp,
+                color = borderColor,
+                shape = shape
+            )
+            .clickable(onClick = onClick)
+            .testTag("theme_card_${previewTheme.id.name.lowercase()}"),
+        shape = shape,
+        color = activeTheme.surface
+    ) {
+        Column(
+            modifier = Modifier.padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // Mini board preview rendered on the candidate theme's own background
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(1.22f)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(previewTheme.bg),
+                contentAlignment = Alignment.Center
+            ) {
+                Canvas(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(10.dp)
+                ) {
+                    val boardSide = size.minDimension
+                    val left = (size.width - boardSide) / 2f
+                    val top = (size.height - boardSide) / 2f
+                    val framePad = if (previewTheme.frame != null) boardSide * 0.06f else 0f
+
+                    // Optional frame
+                    previewTheme.frame?.let { frameColor ->
+                        drawRoundRect(
+                            color = frameColor,
+                            topLeft = Offset(left, top),
+                            size = Size(boardSide, boardSide),
+                            cornerRadius = CornerRadius(boardSide * 0.14f)
+                        )
+                    }
+
+                    val innerLeft = left + framePad
+                    val innerTop = top + framePad
+                    val innerSide = boardSide - framePad * 2f
+
+                    // Board backdrop
+                    drawRoundRect(
+                        color = previewTheme.board,
+                        topLeft = Offset(innerLeft, innerTop),
+                        size = Size(innerSide, innerSide),
+                        cornerRadius = CornerRadius(innerSide * 0.11f)
+                    )
+
+                    val cell = innerSide / 7f
+
+                    // Mini track squares (cross)
+                    for (r in 0..6) {
+                        for (c in 0..6) {
+                            val inCross = r in 2..4 || c in 2..4
+                            if (!inCross) continue
+                            val cx = innerLeft + c * cell
+                            val cy = innerTop + r * cell
+                            val fill = when {
+                                r == 3 && c in 1..2 -> previewTheme.red
+                                c == 3 && r in 1..2 -> previewTheme.green
+                                r == 3 && c in 4..5 -> previewTheme.yellow
+                                c == 3 && r in 4..5 -> previewTheme.blue
+                                r == 3 && c == 3 -> previewTheme.crownIcon
+                                else -> previewTheme.cell
+                            }
+                            drawRect(
+                                color = fill,
+                                topLeft = Offset(cx, cy),
+                                size = Size(cell, cell)
+                            )
+                            drawRect(
+                                color = previewTheme.gridLine,
+                                topLeft = Offset(cx, cy),
+                                size = Size(cell, cell),
+                                style = Stroke(width = 0.75.dp.toPx())
+                            )
+                        }
+                    }
+
+                    // 4 mini corner bases (2x2 each)
+                    val corners = listOf(
+                        Triple(0f, 0f, previewTheme.red),
+                        Triple(5f * cell, 0f, previewTheme.green),
+                        Triple(5f * cell, 5f * cell, previewTheme.yellow),
+                        Triple(0f, 5f * cell, previewTheme.blue)
+                    )
+                    val baseSize = cell * 2f
+                    corners.forEach { (dx, dy, color) ->
+                        val baseFill = if (previewTheme.baseStyle == BaseCornerStyle.TINT) {
+                            color.copy(alpha = 0.18f)
+                        } else {
+                            color
+                        }
+                        drawRoundRect(
+                            color = baseFill,
+                            topLeft = Offset(innerLeft + dx, innerTop + dy),
+                            size = Size(baseSize, baseSize),
+                            cornerRadius = CornerRadius(baseSize * 0.18f)
+                        )
+                        val pad = baseSize * 0.22f
+                        drawRoundRect(
+                            color = previewTheme.baseInner,
+                            topLeft = Offset(innerLeft + dx + pad, innerTop + dy + pad),
+                            size = Size(baseSize - pad * 2f, baseSize - pad * 2f),
+                            cornerRadius = CornerRadius(baseSize * 0.14f)
+                        )
+                    }
+
+                    // 2 tokens in theme colors on the track
+                    val tokenR = cell * 0.38f
+                    val t1 = Offset(innerLeft + 2.5f * cell, innerTop + 1.5f * cell)
+                    val t2 = Offset(innerLeft + 4.5f * cell, innerTop + 4.5f * cell)
+                    listOf(t1 to previewTheme.red, t2 to previewTheme.blue).forEach { (center, col) ->
+                        drawCircle(color = previewTheme.tokenEdge, radius = tokenR, center = center)
+                        drawCircle(color = col, radius = tokenR * 0.78f, center = center)
+                        drawCircle(color = Color.White.copy(alpha = 0.5f), radius = tokenR * 0.28f, center = center)
+                    }
+                }
+
+                if (selected) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(6.dp)
+                            .size(22.dp)
+                            .clip(CircleShape)
+                            .background(activeTheme.blue),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Check,
+                            contentDescription = "Selected theme",
+                            tint = activeTheme.contrastingTextOn(activeTheme.blue),
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                }
+            }
+
+            Text(
+                text = previewTheme.displayName,
+                style = MaterialTheme.typography.titleSmall.copy(
+                    fontFamily = previewTheme.font,
+                    fontSize = 14.sp
+                ),
+                color = activeTheme.surfaceText,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                modifier = Modifier.padding(horizontal = 2.dp)
+            )
         }
     }
 }
@@ -218,7 +463,6 @@ private fun SettingAudioCard(
     iconForLevel: (Boolean, Float) -> ImageVector,
     iconTint: Color,
     sliderAccent: Color,
-    sliderTrackHighlight: Color = sliderAccent,
     title: String,
     subtitle: String,
     volumeLabel: String,
@@ -230,9 +474,10 @@ private fun SettingAudioCard(
     toggleTag: String,
     sliderTag: String
 ) {
+    val theme = LocalLudoTheme.current
     val displayedTarget = if (checked) volume.coerceIn(0f, 1f) else 0f
     var sliderPosition by remember { mutableFloatStateOf(displayedTarget) }
-    var isDragging by remember { androidx.compose.runtime.mutableStateOf(false) }
+    var isDragging by remember { mutableStateOf(false) }
 
     LaunchedEffect(displayedTarget, isDragging) {
         if (!isDragging) {
@@ -246,10 +491,7 @@ private fun SettingAudioCard(
     val badgeText = if (percent == 0) mutedLabel else "$percent%"
     val activeIcon = iconForLevel(effectiveChecked, sliderPosition)
 
-    CartoonCard(
-        modifier = Modifier.fillMaxWidth(),
-        borderColor = if (effectiveChecked && percent > 0) sliderAccent.copy(alpha = 0.35f) else CreamSurfaceVariant
-    ) {
+    CartoonCard(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -269,7 +511,7 @@ private fun SettingAudioCard(
                     Icon(
                         imageVector = activeIcon,
                         contentDescription = null,
-                        tint = if (effectiveChecked && percent > 0) iconTint else InkMuted,
+                        tint = if (effectiveChecked && percent > 0) iconTint else theme.surfaceMutedText,
                         modifier = Modifier.size(24.dp)
                     )
                 }
@@ -278,12 +520,12 @@ private fun SettingAudioCard(
                     Text(
                         text = title,
                         style = MaterialTheme.typography.titleLarge,
-                        color = InkDark
+                        color = theme.surfaceText
                     )
                     Text(
                         text = subtitle,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = InkMuted
+                        color = theme.surfaceMutedText
                     )
                 }
 
@@ -295,20 +537,19 @@ private fun SettingAudioCard(
                     },
                     modifier = Modifier.testTag(toggleTag),
                     colors = SwitchDefaults.colors(
-                        checkedThumbColor = Color.White,
-                        checkedTrackColor = MintGreen,
-                        uncheckedThumbColor = Color.White,
-                        uncheckedTrackColor = InkMuted.copy(alpha = 0.35f)
+                        checkedThumbColor = theme.contrastingTextOn(theme.green),
+                        checkedTrackColor = theme.green,
+                        uncheckedThumbColor = theme.surface,
+                        uncheckedTrackColor = theme.timerTrack
                     )
                 )
             }
 
-            // Interactive Volume Slider Strip
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                color = CreamSurfaceVariant.copy(alpha = 0.65f),
-                border = BorderStroke(1.dp, sliderAccent.copy(alpha = 0.18f))
+                shape = RoundedCornerShape(14.dp),
+                color = theme.surfaceVariant,
+                border = BorderStroke(1.dp, theme.chipLine)
             ) {
                 Column(
                     modifier = Modifier
@@ -323,22 +564,18 @@ private fun SettingAudioCard(
                         Text(
                             text = volumeLabel,
                             style = MaterialTheme.typography.labelMedium,
-                            color = InkMuted,
+                            color = theme.surfaceMutedText,
                             fontWeight = FontWeight.Bold
                         )
                         Surface(
                             shape = RoundedCornerShape(999.dp),
-                            color = if (percent > 0) {
-                                sliderAccent.copy(alpha = 0.14f)
-                            } else {
-                                InkMuted.copy(alpha = 0.14f)
-                            }
+                            color = if (percent > 0) sliderAccent.copy(alpha = 0.14f) else theme.timerTrack
                         ) {
                             Text(
                                 text = badgeText,
                                 style = MaterialTheme.typography.labelMedium,
-                                color = if (percent > 0) sliderAccent else InkMuted,
-                                fontWeight = FontWeight.ExtraBold,
+                                color = if (percent > 0) sliderAccent else theme.surfaceMutedText,
+                                fontWeight = FontWeight.Bold,
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier
                                     .widthIn(min = 50.dp)
@@ -355,7 +592,7 @@ private fun SettingAudioCard(
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.VolumeMute,
                             contentDescription = null,
-                            tint = InkMuted,
+                            tint = theme.surfaceMutedText,
                             modifier = Modifier.size(18.dp)
                         )
 
@@ -380,15 +617,15 @@ private fun SettingAudioCard(
                                 },
                             colors = SliderDefaults.colors(
                                 thumbColor = sliderAccent,
-                                activeTrackColor = sliderTrackHighlight,
-                                inactiveTrackColor = InkMuted.copy(alpha = 0.24f)
+                                activeTrackColor = sliderAccent,
+                                inactiveTrackColor = theme.timerTrack
                             )
                         )
 
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.VolumeUp,
                             contentDescription = null,
-                            tint = if (percent > 0) sliderAccent else InkMuted,
+                            tint = if (percent > 0) sliderAccent else theme.surfaceMutedText,
                             modifier = Modifier.size(18.dp)
                         )
                     }
@@ -408,6 +645,7 @@ private fun SettingToggleRow(
     onCheckedChange: (Boolean) -> Unit,
     tag: String
 ) {
+    val theme = LocalLudoTheme.current
     CartoonCard(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -433,12 +671,12 @@ private fun SettingToggleRow(
                 Text(
                     text = title,
                     style = MaterialTheme.typography.titleLarge,
-                    color = InkDark
+                    color = theme.surfaceText
                 )
                 Text(
                     text = subtitle,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = InkMuted
+                    color = theme.surfaceMutedText
                 )
             }
 
@@ -447,10 +685,10 @@ private fun SettingToggleRow(
                 onCheckedChange = onCheckedChange,
                 modifier = Modifier.testTag(tag),
                 colors = SwitchDefaults.colors(
-                    checkedThumbColor = Color.White,
-                    checkedTrackColor = MintGreen,
-                    uncheckedThumbColor = Color.White,
-                    uncheckedTrackColor = InkMuted.copy(alpha = 0.35f)
+                    checkedThumbColor = theme.contrastingTextOn(theme.green),
+                    checkedTrackColor = theme.green,
+                    uncheckedThumbColor = theme.surface,
+                    uncheckedTrackColor = theme.timerTrack
                 )
             )
         }

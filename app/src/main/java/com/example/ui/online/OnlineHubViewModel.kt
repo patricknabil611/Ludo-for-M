@@ -5,6 +5,8 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.engine.BotDifficulty
 import com.example.engine.GameModeId
+import com.example.engine.MatchFormat
+import com.example.engine.TurnTimerOption
 import com.example.online.OnlineRoom
 import com.example.online.OnlineRoomRepository
 import com.example.online.RoomStatus
@@ -78,8 +80,9 @@ class OnlineHubViewModel(
     fun createPrivateRoom(
         nickname: String,
         mode: GameModeId,
-        targetPlayerCount: Int,
-        timedDurationSeconds: Int,
+        matchFormat: MatchFormat = MatchFormat.ONE_VS_ONE,
+        timedDurationSeconds: Int = 300,
+        turnTimerSeconds: Int = TurnTimerOption.DEFAULT_SECONDS,
         avatarId: String = "",
         onRoomCreated: (String) -> Unit
     ) {
@@ -90,8 +93,9 @@ class OnlineHubViewModel(
                 hostUid = uid,
                 hostNickname = nickname,
                 mode = mode,
-                targetPlayerCount = targetPlayerCount,
+                matchFormat = matchFormat,
                 timedDurationSeconds = timedDurationSeconds,
+                turnTimerSeconds = turnTimerSeconds,
                 hostAvatarId = avatarId
             )
             result.onSuccess { code ->
@@ -145,8 +149,9 @@ class OnlineHubViewModel(
     fun startMatchmaking(
         nickname: String,
         mode: GameModeId,
-        targetPlayerCount: Int,
+        matchFormat: MatchFormat = MatchFormat.ONE_VS_ONE,
         timedDurationSeconds: Int = 300,
+        turnTimerSeconds: Int = TurnTimerOption.DEFAULT_SECONDS,
         avatarId: String = ""
     ) {
         if (_uiState.value.isBusy || _uiState.value.isSearchingMatchmaking) return
@@ -164,8 +169,9 @@ class OnlineHubViewModel(
                 uid = uid,
                 nickname = nickname,
                 mode = mode,
-                targetPlayerCount = targetPlayerCount,
+                matchFormat = matchFormat,
                 timedDurationSeconds = timedDurationSeconds,
+                turnTimerSeconds = turnTimerSeconds,
                 avatarId = avatarId
             )
             result.onSuccess { code ->

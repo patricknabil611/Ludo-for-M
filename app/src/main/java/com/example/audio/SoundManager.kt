@@ -32,8 +32,26 @@ open class SoundManager(
     private val fileLocks = ConcurrentHashMap<SoundEffect, Any>()
     private val cachedFiles = ConcurrentHashMap<SoundEffect, File>()
 
+    private class ManagedPlayer(val player: MediaPlayer) {
+        val lock = Any()
+
+        @Volatile
+        var isReleased: Boolean = false
+            private set
+
+        fun releaseOnce() {
+            synchronized(lock) {
+                if (isReleased) return
+                isReleased = true
+                runCatching { player.setOnCompletionListener(null) }
+                runCatching { player.setOnErrorListener(null) }
+                runCatching { player.release() }
+            }
+        }
+    }
+
     private val activePlayersLock = Any()
-    private val activeOneShotPlayers = ArrayDeque<MediaPlayer>()
+    private val activeOneShotPlayers = ArrayDeque<ManagedPlayer>()
 
     @Volatile
     private var sfxEnabled: Boolean = true
@@ -138,8 +156,9 @@ open class SoundManager(
 
     fun playPowerUpPickup(type: PowerUpType) {
         val effect = when (type) {
+            PowerUpType.ROCKET -> SoundEffect.DOUBLE_DICE_ACTIVATE
+            PowerUpType.GOLDEN_DICE -> SoundEffect.DOUBLE_DICE_PICKUP
             PowerUpType.SHIELD -> SoundEffect.SHIELD_PICKUP
-            PowerUpType.DOUBLE_DICE -> SoundEffect.DOUBLE_DICE_PICKUP
             PowerUpType.BOMB_TRAP -> SoundEffect.BOMB_PICKUP
         }
         playEffect(effect)
@@ -147,8 +166,9 @@ open class SoundManager(
 
     fun playPowerUpActivate(type: PowerUpType) {
         val effect = when (type) {
+            PowerUpType.ROCKET -> SoundEffect.DOUBLE_DICE_ACTIVATE
+            PowerUpType.GOLDEN_DICE -> SoundEffect.DOUBLE_DICE_ACTIVATE
             PowerUpType.SHIELD -> SoundEffect.SHIELD_ACTIVATE
-            PowerUpType.DOUBLE_DICE -> SoundEffect.DOUBLE_DICE_ACTIVATE
             PowerUpType.BOMB_TRAP -> SoundEffect.BOMB_ARM
         }
         playEffect(effect)
@@ -213,53 +233,64 @@ open class SoundManager(
     }
 
     private fun playOneShotInternal(effect: SoundEffect, volume: Float) {
-        var player: MediaPlayer? = null
+        var managed: ManagedPlayer? = null
         try {
             val wavFile = ensureWavFile(effect)
             if (released || !sfxEnabled) return
 
-            player = mediaPlayerFactory()
-            registerOneShotPlayer(player)
+            val candidate = ManagedPlayer(mediaPlayerFactory())
+            managed = candidate
 
-            player.setAudioAttributes(sfxAudioAttributes)
-            FileInputStream(wavFile).use { fis ->
-                player.setDataSource(fis.fd)
+            synchronized(candidate.lock) {
+                if (released || !sfxEnabled || candidate.isReleased) {
+                    candidate.releaseOnce()
+                    return
+                }
+                val player = candidate.player
+                player.setAudioAttributes(sfxAudioAttributes)
+                FileInputStream(wavFile).use { fis ->
+                    player.setDataSource(fis.fd)
+                }
+                player.setOnCompletionListener {
+                    releaseOneShotPlayer(candidate)
+                }
+                player.setOnErrorListener { _, _, _ ->
+                    releaseOneShotPlayer(candidate)
+                    true
+                }
+                player.prepare()
+                player.setVolume(volume, volume)
+                if (!registerOneShotPlayer(candidate)) {
+                    candidate.releaseOnce()
+                    return
+                }
+                player.start()
             }
-            player.setVolume(volume, volume)
-            player.setOnCompletionListener { completed ->
-                releaseOneShotPlayer(completed)
-            }
-            player.setOnErrorListener { errored, _, _ ->
-                releaseOneShotPlayer(errored)
-                true
-            }
-            player.prepare()
-            if (released || !sfxEnabled) {
-                releaseOneShotPlayer(player)
-                return
-            }
-            player.start()
         } catch (_: Exception) {
-            player?.let { releaseOneShotPlayer(it) }
+            managed?.let { releaseOneShotPlayer(it) }
         }
     }
 
-    private fun registerOneShotPlayer(player: MediaPlayer) {
-        var evicted: MediaPlayer? = null
+    private fun registerOneShotPlayer(managed: ManagedPlayer): Boolean {
+        var evicted: ManagedPlayer? = null
         synchronized(activePlayersLock) {
+            if (released || !sfxEnabled || managed.isReleased) {
+                return false
+            }
             if (activeOneShotPlayers.size >= MAX_CONCURRENT_SFX_PLAYERS) {
                 evicted = activeOneShotPlayers.removeFirst()
             }
-            activeOneShotPlayers.addLast(player)
+            activeOneShotPlayers.addLast(managed)
         }
-        evicted?.let { safeReleasePlayer(it) }
+        evicted?.releaseOnce()
+        return true
     }
 
-    private fun releaseOneShotPlayer(player: MediaPlayer) {
+    private fun releaseOneShotPlayer(managed: ManagedPlayer) {
         synchronized(activePlayersLock) {
-            activeOneShotPlayers.remove(player)
+            activeOneShotPlayers.remove(managed)
         }
-        safeReleasePlayer(player)
+        managed.releaseOnce()
     }
 
     private fun stopAllOneShotPlayers() {
@@ -268,17 +299,7 @@ open class SoundManager(
             activeOneShotPlayers.clear()
             copy
         }
-        snapshot.forEach { safeReleasePlayer(it) }
-    }
-
-    private fun safeReleasePlayer(player: MediaPlayer) {
-        runCatching {
-            if (player.isPlaying) {
-                player.stop()
-            }
-        }
-        runCatching { player.reset() }
-        runCatching { player.release() }
+        snapshot.forEach { it.releaseOnce() }
     }
 
     companion object {

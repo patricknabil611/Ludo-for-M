@@ -22,6 +22,17 @@ object LudoBoardGeometry {
     val SAFE_TRACK_INDICES: Set<Int> = START_TRACK_INDICES + STAR_TRACK_INDICES
 
     /**
+     * Arrow mode shortcut tiles (tail -> tip) on the 52-cell outer track.
+     * Landing exactly on a tail slides the token forward 6 squares to the tip.
+     */
+    val ARROW_SHORTCUTS: Map<Int, Int> = mapOf(
+        4 to 10,
+        17 to 23,
+        30 to 36,
+        43 to 49
+    )
+
+    /**
      * Exact 52-cell clockwise outer track coordinates.
      * Index 0 is Red's start square at (6, 1).
      */
@@ -31,14 +42,14 @@ object LudoBoardGeometry {
         BoardCoord(6, 2), // 1
         BoardCoord(6, 3), // 2
         BoardCoord(6, 4), // 3
-        BoardCoord(6, 5), // 4
+        BoardCoord(6, 5), // 4 - Arrow tail -> 10
         // 5..10: Top arm left column moving up
         BoardCoord(5, 6), // 5
         BoardCoord(4, 6), // 6
         BoardCoord(3, 6), // 7
         BoardCoord(2, 6), // 8 - Star Safe (8 steps after Red start)
         BoardCoord(1, 6), // 9
-        BoardCoord(0, 6), // 10
+        BoardCoord(0, 6), // 10 - Arrow tip (from 4)
         // 11..12: Top bridge
         BoardCoord(0, 7), // 11 - Green home column entry
         BoardCoord(0, 8), // 12
@@ -47,14 +58,14 @@ object LudoBoardGeometry {
         BoardCoord(2, 8), // 14
         BoardCoord(3, 8), // 15
         BoardCoord(4, 8), // 16
-        BoardCoord(5, 8), // 17
+        BoardCoord(5, 8), // 17 - Arrow tail -> 23
         // 18..23: Right arm top row moving right
         BoardCoord(6, 9),  // 18
         BoardCoord(6, 10), // 19
         BoardCoord(6, 11), // 20
         BoardCoord(6, 12), // 21 - Star Safe (8 steps after Green start)
         BoardCoord(6, 13), // 22
-        BoardCoord(6, 14), // 23
+        BoardCoord(6, 14), // 23 - Arrow tip (from 17)
         // 24..25: Right bridge
         BoardCoord(7, 14), // 24 - Yellow home column entry
         BoardCoord(8, 14), // 25
@@ -63,14 +74,14 @@ object LudoBoardGeometry {
         BoardCoord(8, 12), // 27
         BoardCoord(8, 11), // 28
         BoardCoord(8, 10), // 29
-        BoardCoord(8, 9),  // 30
+        BoardCoord(8, 9),  // 30 - Arrow tail -> 36
         // 31..36: Bottom arm right column moving down
         BoardCoord(9, 8),  // 31
         BoardCoord(10, 8), // 32
         BoardCoord(11, 8), // 33
         BoardCoord(12, 8), // 34 - Star Safe (8 steps after Yellow start)
         BoardCoord(13, 8), // 35
-        BoardCoord(14, 8), // 36
+        BoardCoord(14, 8), // 36 - Arrow tip (from 30)
         // 37..38: Bottom bridge
         BoardCoord(14, 7), // 37 - Blue home column entry
         BoardCoord(14, 6), // 38
@@ -79,14 +90,14 @@ object LudoBoardGeometry {
         BoardCoord(12, 6), // 40
         BoardCoord(11, 6), // 41
         BoardCoord(10, 6), // 42
-        BoardCoord(9, 6),  // 43
+        BoardCoord(9, 6),  // 43 - Arrow tail -> 49
         // 44..49: Left arm bottom row moving left
         BoardCoord(8, 5), // 44
         BoardCoord(8, 4), // 45
         BoardCoord(8, 3), // 46
         BoardCoord(8, 2), // 47 - Star Safe (8 steps after Blue start)
         BoardCoord(8, 1), // 48
-        BoardCoord(8, 0), // 49
+        BoardCoord(8, 0), // 49 - Arrow tip (from 43)
         // 50..51: Left bridge
         BoardCoord(7, 0), // 50 - Red home column entry
         BoardCoord(6, 0)  // 51

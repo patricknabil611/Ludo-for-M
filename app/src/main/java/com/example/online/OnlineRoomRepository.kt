@@ -3,18 +3,18 @@ package com.example.online
 import android.content.Context
 import com.example.R
 import com.example.bot.BotDecisionEngine
-import com.example.bot.BotPowerUpAction
 import com.example.bot.LudoBotBrain
 import com.example.engine.BotDifficulty
 import com.example.engine.GameModeId
 import com.example.engine.GameState
 import com.example.engine.LegalMove
 import com.example.engine.LudoEngine
+import com.example.engine.MatchFormat
 import com.example.engine.PlayerColor
-import com.example.engine.PowerUpType
 import com.example.engine.RollOutcome
 import com.example.engine.RuleSetRegistry
 import com.example.engine.TurnPhase
+import com.example.engine.TurnTimerOption
 import com.google.firebase.Timestamp
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
@@ -27,9 +27,11 @@ import kotlinx.coroutines.tasks.await
 import kotlin.random.Random
 
 /**
- * Authoritative Firestore multiplayer repository for /rooms/{roomCode}.
- * Handles private room codes, public matchmaking, atomic turn transitions,
- * server-timestamped fair dice, 30s timeout skips, 3-miss/60s-disconnect Medium bot takeover,
+ * Authoritative Firestore multiplayer repository for /rooms/{roomCode} (v2.1).
+ * Supports all 9 modes across all 3 match formats (1v1, 4 Players, 2v2 Team),
+ * host-selected turn timer (Off / 10s / 15s / 20s, default 15s),
+ * single-die Yalla-Ludo roll stacking, instant Magic Bomb Trap placement,
+ * timeout auto-roll / auto-move via BotBrain with NO bot takeover on timeout,
  * reconnection, host handoff, and unanimous post-game rematch voting.
  */
 class OnlineRoomRepository(
@@ -75,10 +77,6 @@ class OnlineRoomRepository(
         awaitClose { reg.remove() }
     }
 
-    /**
-     * Checks if the player has a live PLAYING match to reconnect to when the app reopens.
-     * Checks [preferredRoomCode] first, then scans the player's member rooms.
-     */
     suspend fun findRunningRoomForUser(uid: String, preferredRoomCode: String = ""): OnlineRoom? {
         if (uid.isBlank()) return null
         return try {
@@ -107,8 +105,9 @@ class OnlineRoomRepository(
         hostUid: String,
         hostNickname: String,
         mode: GameModeId,
-        targetPlayerCount: Int,
-        timedDurationSeconds: Int,
+        matchFormat: MatchFormat = MatchFormat.FOUR_PLAYERS,
+        turnTimerSeconds: Int = TurnTimerOption.DEFAULT_SECONDS,
+        timedDurationSeconds: Int = 300,
         hostAvatarId: String = ""
     ): Result<String> {
         return createRoomInternal(
@@ -116,25 +115,27 @@ class OnlineRoomRepository(
             hostNickname = hostNickname,
             hostAvatarId = hostAvatarId,
             mode = mode,
-            targetPlayerCount = targetPlayerCount,
+            matchFormat = matchFormat,
+            turnTimerSeconds = turnTimerSeconds,
             timedDurationSeconds = timedDurationSeconds,
             publicMatchmaking = false
         )
     }
 
     /**
-     * Searches open public matchmaking lobbies matching [mode] & [targetPlayerCount],
+     * Searches open public matchmaking lobbies matching [mode] & [matchFormat],
      * atomically joins the best candidate (auto-starting if full), or creates a new public lobby.
      */
     suspend fun findOrCreateMatchmakingRoom(
         uid: String,
         nickname: String,
         mode: GameModeId,
-        targetPlayerCount: Int,
+        matchFormat: MatchFormat = MatchFormat.FOUR_PLAYERS,
+        turnTimerSeconds: Int = TurnTimerOption.DEFAULT_SECONDS,
         timedDurationSeconds: Int = 300,
         avatarId: String = ""
     ): Result<String> {
-        val effectiveCount = if (mode == GameModeId.TEAMS_2V2) 4 else targetPlayerCount.coerceIn(2, 4)
+        val effectiveCount = matchFormat.playerCount
         return try {
             val openSnap = roomsCol
                 .whereEqualTo("publicMatchmaking", true)
@@ -147,6 +148,7 @@ class OnlineRoomRepository(
                 .mapNotNull(::parseRoom)
                 .filter { room ->
                     room.mode == mode &&
+                        room.matchFormat == matchFormat &&
                         room.targetPlayerCount == effectiveCount &&
                         (room.memberUids.contains(uid) || room.memberUids.size < room.targetPlayerCount) &&
                         ((nowMs - (room.updatedAt?.toDate()?.time ?: nowMs)) < 10 * 60_000L)
@@ -174,7 +176,8 @@ class OnlineRoomRepository(
                 hostNickname = nickname,
                 hostAvatarId = avatarId,
                 mode = mode,
-                targetPlayerCount = effectiveCount,
+                matchFormat = matchFormat,
+                turnTimerSeconds = turnTimerSeconds,
                 timedDurationSeconds = timedDurationSeconds,
                 publicMatchmaking = true
             )
@@ -191,14 +194,16 @@ class OnlineRoomRepository(
         hostNickname: String,
         hostAvatarId: String,
         mode: GameModeId,
-        targetPlayerCount: Int,
+        matchFormat: MatchFormat,
+        turnTimerSeconds: Int,
         timedDurationSeconds: Int,
         publicMatchmaking: Boolean
     ): Result<String> {
-        val count = if (mode == GameModeId.TEAMS_2V2) 4 else targetPlayerCount.coerceIn(2, 4)
+        val count = matchFormat.playerCount
         val cleanName = hostNickname.trim().take(24).ifBlank { "Player" }
         val cleanAvatar = hostAvatarId.trim().take(64)
         val duration = timedDurationSeconds.coerceIn(60, 1800)
+        val timerSec = turnTimerSeconds.coerceIn(0, 60)
 
         repeat(5) {
             val code = FairDiceRoller.generateRoomCode()
@@ -216,6 +221,8 @@ class OnlineRoomRepository(
                             "roomCode" to code,
                             "hostUid" to hostUid,
                             "mode" to mode.name,
+                            "matchFormat" to matchFormat.name,
+                            "turnTimerSeconds" to timerSec,
                             "targetPlayerCount" to count,
                             "timedDurationSeconds" to duration,
                             "status" to RoomStatus.LOBBY.name,
@@ -271,7 +278,6 @@ class OnlineRoomRepository(
                 val room = parseRoom(snap)
                     ?: throw IllegalStateException("Room $code not found.")
 
-                // Rejoin if already a member
                 if (uid in room.memberUids) {
                     if (room.status == RoomStatus.CLOSED) {
                         throw IllegalStateException("This room has already closed.")
@@ -313,6 +319,8 @@ class OnlineRoomRepository(
                     val freshState = createAuthoritativeGameState(
                         seats = updatedSeats,
                         mode = room.mode,
+                        matchFormat = room.matchFormat,
+                        turnTimerSeconds = room.turnTimerSeconds,
                         timedDurationSeconds = room.timedDurationSeconds,
                         seed = room.diceSeed
                     )
@@ -414,10 +422,6 @@ class OnlineRoomRepository(
         }
     }
 
-    /**
-     * Starts a lobby match. If [fillOpenSeatsWithBots] is true (used by matchmaking 30s fallback
-     * or when host starts with fewer players than target), open seats are filled with bots.
-     */
     suspend fun startLobbyMatch(
         roomCode: String,
         actorUid: String,
@@ -448,7 +452,7 @@ class OnlineRoomRepository(
                             botTakeover = false,
                             rematchVoted = false
                         )
-                        fillOpenSeatsWithBots -> seat.copy(
+                        fillOpenSeatsWithBots || room.matchFormat.isTeamFormat -> seat.copy(
                             uid = "",
                             nickname = "${seat.color.displayName} Bot",
                             controllerType = SeatControl.BOT,
@@ -461,14 +465,17 @@ class OnlineRoomRepository(
                     }
                 }.filter { it.controllerType != SeatControl.OPEN }
 
-                if (finalizedSeats.size < room.mode.minPlayers) {
-                    throw IllegalStateException("Need at least ${room.mode.minPlayers} active seats to start.")
+                val minRequired = if (room.matchFormat.isTeamFormat) 4 else room.mode.minPlayers
+                if (finalizedSeats.size < minRequired) {
+                    throw IllegalStateException("Need at least $minRequired active seats to start.")
                 }
 
                 val newSeed = Random.nextLong(1L, Long.MAX_VALUE)
                 val initialGameState = createAuthoritativeGameState(
                     seats = finalizedSeats,
                     mode = room.mode,
+                    matchFormat = room.matchFormat,
+                    turnTimerSeconds = room.turnTimerSeconds,
                     timedDurationSeconds = room.timedDurationSeconds,
                     seed = newSeed
                 )
@@ -498,13 +505,6 @@ class OnlineRoomRepository(
         }
     }
 
-    /**
-     * Leaves a room cleanly:
-     * - In LOBBY: frees the seat, transfers hostUid if host left, or closes room if empty.
-     * - In PLAYING: keeps match running! Transfers hostUid if host left, hands departing seat
-     *   over to a Medium bot (`botTakeover = true`), or closes room if no human players remain.
-     * - In FINISHED: removes from memberUids, transfers hostUid, or closes room if empty.
-     */
     suspend fun leaveRoom(roomCode: String, uid: String): Result<Unit> {
         val code = roomCode.trim().uppercase()
         val ref = roomsCol.document(code)
@@ -566,7 +566,7 @@ class OnlineRoomRepository(
                             "status" to nextStatus.name,
                             "turnSeq" to room.turnSeq + 1,
                             "lastActionType" to OnlineActionType.BOT_TAKEOVER.name,
-                            "lastActionSummary" to "$leavingName left — Medium Bot took over!",
+                            "lastActionSummary" to "$leavingName left the match — Bot took over.",
                             "updatedAt" to FieldValue.serverTimestamp()
                         )
                         if (syncedGame != null) {
@@ -607,8 +607,7 @@ class OnlineRoomRepository(
     }
 
     /**
-     * Authoritative fair dice roll transaction.
-     * Dice value is derived deterministically from Firestore server `turnStartedAt` + `diceSeed` + `rollSeq`.
+     * Authoritative fair single-die roll transaction with Yalla-Ludo 6-stacking.
      */
     suspend fun submitDiceRoll(
         roomCode: String,
@@ -635,12 +634,12 @@ class OnlineRoomRepository(
                 if (!authorized) return@runTransaction
 
                 val engine = LudoEngine(
-                    ruleSet = RuleSetRegistry.forMode(room.mode),
+                    ruleSet = RuleSetRegistry.forMode(room.mode, room.matchFormat),
                     eventRandom = deterministicEventRandom(room.diceSeed, room.turnSeq + 1)
                 )
                 val nextRollSeq = room.rollSeq + 1
                 val serverSec = room.turnStartedAt?.seconds ?: 0L
-                val (die1, die2) = FairDiceRoller.computeDoubleRoll(
+                val dieValue = FairDiceRoller.computeSingleRoll(
                     roomCode = room.roomCode,
                     diceSeed = room.diceSeed,
                     rollSeq = nextRollSeq,
@@ -648,7 +647,7 @@ class OnlineRoomRepository(
                     activeColor = activeColor
                 )
 
-                val outcome = engine.applyDiceRoll(state, die1, die2)
+                val outcome = engine.applyDiceRoll(state, dieValue)
                 val updatedSeats = room.seats.map { seat ->
                     if (seat.color == activeColor && !asBotCoordinator) {
                         seat.copy(
@@ -662,29 +661,31 @@ class OnlineRoomRepository(
                 val finalState: GameState
                 val summary: String
                 when (outcome) {
-                    is RollOutcome.TripleSixCancelled -> {
-                        val advanced = engine.commitTurnAdvance(outcome.state)
-                        finalState = advanced.copy(
-                            lastDiceValue = outcome.state.lastDiceValue,
-                            lastRawDiceValue = outcome.state.lastRawDiceValue,
-                            lastSecondDiceValue = outcome.state.lastSecondDiceValue,
-                            lastEventMessage = "${state.activePlayer.nickname} rolled three 6s! Turn passed."
-                        )
+                    is RollOutcome.RollAgainStacked -> {
+                        finalState = outcome.state
                         summary = finalState.lastEventMessage
                     }
+                    is RollOutcome.TripleSixCancelled -> {
+                        val advanced = engine.advanceTurnAfterSkip(outcome.state)
+                        finalState = advanced.copy(
+                            lastDiceValue = 6,
+                            lastRawDiceValue = 6,
+                            lastEventMessage = "Three 6s — turn lost"
+                        )
+                        summary = "Three 6s — turn lost"
+                    }
                     is RollOutcome.NoLegalMoves -> {
-                        val advanced = engine.commitTurnAdvance(outcome.state)
+                        val advanced = engine.advanceTurnAfterSkip(outcome.state)
                         finalState = advanced.copy(
                             lastDiceValue = outcome.state.lastDiceValue,
                             lastRawDiceValue = outcome.state.lastRawDiceValue,
-                            lastSecondDiceValue = outcome.state.lastSecondDiceValue,
-                            lastEventMessage = "${state.activePlayer.nickname} rolled ${outcome.state.lastDiceValue} — no moves!"
+                            lastEventMessage = outcome.state.lastEventMessage
                         )
                         summary = finalState.lastEventMessage
                     }
                     is RollOutcome.SingleLegalMove, is RollOutcome.MultipleLegalMoves -> {
                         finalState = outcome.state
-                        summary = "${state.activePlayer.nickname} rolled $die1 & $die2!"
+                        summary = outcome.state.lastEventMessage
                     }
                 }
 
@@ -751,16 +752,16 @@ class OnlineRoomRepository(
 
                 val move = (if (dieValueUsed != null) {
                     state.legalMoves.firstOrNull {
-                        it.color == tokenColor && it.tokenId == tokenId && it.dieValueUsed == dieValueUsed
+                        it.color == tokenColor && it.includesToken(tokenId) && it.dieValueUsed == dieValueUsed
                     }
                 } else {
                     null
                 }) ?: state.legalMoves.firstOrNull {
-                    it.color == tokenColor && it.tokenId == tokenId
+                    it.color == tokenColor && it.includesToken(tokenId)
                 } ?: return@runTransaction
 
                 val engine = LudoEngine(
-                    ruleSet = RuleSetRegistry.forMode(room.mode),
+                    ruleSet = RuleSetRegistry.forMode(room.mode, room.matchFormat),
                     eventRandom = deterministicEventRandom(room.diceSeed, room.turnSeq + 1)
                 )
                 val outcome = engine.applyMove(state, move)
@@ -787,7 +788,7 @@ class OnlineRoomRepository(
                         "lastMovedColor" to move.color.name,
                         "lastMovedTokenId" to move.tokenId,
                         "lastMovedFromProgress" to move.fromProgress,
-                        "lastMovedToProgress" to move.toProgress,
+                        "lastMovedToProgress" to outcome.move.toProgress,
                         "gameStateMap" to GameStateFirestoreMapper.toFirestoreMap(synced),
                         "turnStartedAt" to FieldValue.serverTimestamp(),
                         "updatedAt" to FieldValue.serverTimestamp()
@@ -804,13 +805,13 @@ class OnlineRoomRepository(
     }
 
     /**
-     * Authoritative power-up activation before rolling (Shield, Double Dice, or Bomb Trap).
+     * Authoritative Magic-mode Bomb Trap placement after landing on a Bomb Trap item.
      */
-    suspend fun submitPowerUpAction(
+    suspend fun submitBombPlacement(
         roomCode: String,
         actorUid: String,
         expectedTurnSeq: Int,
-        action: BotPowerUpAction,
+        trackIndex: Int,
         asBotCoordinator: Boolean = false
     ): Result<Unit> {
         val code = roomCode.trim().uppercase()
@@ -819,9 +820,8 @@ class OnlineRoomRepository(
             firestore.runTransaction { tx ->
                 val room = parseRoom(tx.get(ref)) ?: return@runTransaction
                 if (room.status != RoomStatus.PLAYING || room.turnSeq != expectedTurnSeq) return@runTransaction
-                if (room.mode != GameModeId.POWER_UP) return@runTransaction
                 val state = room.gameState ?: return@runTransaction
-                if (state.isMatchFinished || state.phase != TurnPhase.AWAITING_ROLL) return@runTransaction
+                if (state.isMatchFinished || state.phase != TurnPhase.AWAITING_BOMB_PLACEMENT) return@runTransaction
 
                 val activeColor = state.activePlayer.color
                 val activeSeat = room.seatForColor(activeColor) ?: return@runTransaction
@@ -832,35 +832,30 @@ class OnlineRoomRepository(
                 }
                 if (!authorized) return@runTransaction
 
-                val engine = LudoEngine(RuleSetRegistry.forMode(room.mode))
-                val (nextState, actionType) = when (action) {
-                    is BotPowerUpAction.UseShield -> {
-                        if (PowerUpType.SHIELD !in state.activePlayer.heldPowerUps) return@runTransaction
-                        engine.activateShield(state, action.tokenId) to OnlineActionType.SHIELD
-                    }
-                    BotPowerUpAction.UseDoubleDice -> {
-                        if (PowerUpType.DOUBLE_DICE !in state.activePlayer.heldPowerUps ||
-                            state.activePlayer.doubleDiceActive
-                        ) return@runTransaction
-                        engine.activateDoubleDice(state) to OnlineActionType.DOUBLE_DICE
-                    }
-                    is BotPowerUpAction.UseBombTrap -> {
-                        if (PowerUpType.BOMB_TRAP !in state.activePlayer.heldPowerUps) return@runTransaction
-                        engine.placeBombTrap(state, action.trackIndex) to OnlineActionType.BOMB
-                    }
-                }
+                val pending = state.powerUpState.pendingBombPlacement ?: return@runTransaction
+                if (trackIndex !in pending.validTrackIndices) return@runTransaction
+
+                val engine = LudoEngine(
+                    ruleSet = RuleSetRegistry.forMode(room.mode, room.matchFormat),
+                    eventRandom = deterministicEventRandom(room.diceSeed, room.turnSeq + 1)
+                )
+                val nextState = engine.placePendingBomb(state, trackIndex)
+                val synced = syncGameStateWithSeats(nextState, room.seats)
+                val nextStatus = if (synced.isMatchFinished) RoomStatus.FINISHED else RoomStatus.PLAYING
 
                 tx.update(
                     ref,
                     mapOf(
+                        "status" to nextStatus.name,
                         "turnSeq" to room.turnSeq + 1,
-                        "lastActionType" to actionType.name,
-                        "lastActionSummary" to nextState.lastEventMessage.take(180),
+                        "lastActionType" to OnlineActionType.BOMB.name,
+                        "lastActionSummary" to synced.lastEventMessage.take(180),
                         "lastMovedColor" to activeColor.name,
                         "lastMovedTokenId" to -1,
                         "lastMovedFromProgress" to -1,
                         "lastMovedToProgress" to -1,
-                        "gameStateMap" to GameStateFirestoreMapper.toFirestoreMap(nextState),
+                        "gameStateMap" to GameStateFirestoreMapper.toFirestoreMap(synced),
+                        "turnStartedAt" to FieldValue.serverTimestamp(),
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
                 )
@@ -875,8 +870,11 @@ class OnlineRoomRepository(
     }
 
     /**
-     * Handles synced 30-second turn timeout: skips turn, increments consecutiveMisses,
-     * and switches the seat to a Medium bot after 3 missed turns in a row.
+     * Handles turn timer expiry per v2.1 rules:
+     * - Auto-rolls if the active player hasn't rolled yet.
+     * - Auto-places bomb via botBrain if awaiting bomb placement.
+     * - Auto-plays the best legal move via botBrain if awaiting a move.
+     * - NEVER hands the seat over to a bot, regardless of how many timeouts occur!
      */
     suspend fun submitTurnTimeout(
         roomCode: String,
@@ -895,47 +893,108 @@ class OnlineRoomRepository(
 
                 val activeColor = state.activePlayer.color
                 val activeSeat = room.seatForColor(activeColor) ?: return@runTransaction
-
-                var triggeredTakeover = false
-                val updatedSeats = room.seats.map { seat ->
-                    if (seat.color == activeColor && seat.controllerType == SeatControl.HUMAN && !seat.botTakeover) {
-                        val misses = seat.consecutiveMisses + 1
-                        val takeover = misses >= 3
-                        if (takeover) triggeredTakeover = true
-                        seat.copy(
-                            consecutiveMisses = misses,
-                            botTakeover = takeover
-                        )
-                    } else seat
-                }
-
+                val ruleSet = RuleSetRegistry.forMode(room.mode, room.matchFormat)
                 val engine = LudoEngine(
-                    ruleSet = RuleSetRegistry.forMode(room.mode),
+                    ruleSet = ruleSet,
                     eventRandom = deterministicEventRandom(room.diceSeed, room.turnSeq + 1)
                 )
-                val timedOut = engine.handleTurnTimeout(state)
-                val synced = syncGameStateWithSeats(timedOut, updatedSeats)
-                val summary = if (triggeredTakeover) {
-                    "${activeSeat.nickname} missed 3 turns — Medium Bot took over!"
-                } else {
-                    "${activeSeat.nickname} ran out of time! Turn skipped."
+
+                var nextRollSeq = room.rollSeq
+                var movedColor = ""
+                var movedTokenId = -1
+                var movedFrom = -1
+                var movedTo = -1
+
+                val nextState: GameState = when (state.phase) {
+                    TurnPhase.AWAITING_ROLL -> {
+                        val serverSec = room.turnStartedAt?.seconds ?: 0L
+                        var working = state
+                        var rollGuard = 0
+                        while (working.phase == TurnPhase.AWAITING_ROLL && !working.isMatchFinished && rollGuard < 4) {
+                            rollGuard++
+                            nextRollSeq++
+                            val dieVal = FairDiceRoller.computeSingleRoll(
+                                roomCode = room.roomCode,
+                                diceSeed = room.diceSeed,
+                                rollSeq = nextRollSeq,
+                                turnStartedAtSeconds = serverSec,
+                                activeColor = activeColor
+                            )
+                            when (val rollOutcome = engine.applyDiceRoll(working, dieVal)) {
+                                is RollOutcome.RollAgainStacked -> working = rollOutcome.state
+                                is RollOutcome.TripleSixCancelled -> {
+                                    working = engine.advanceTurnAfterSkip(rollOutcome.state).copy(
+                                        lastEventMessage = "${activeSeat.nickname} timed out — Three 6s, turn lost."
+                                    )
+                                }
+                                is RollOutcome.NoLegalMoves -> {
+                                    working = engine.advanceTurnAfterSkip(rollOutcome.state).copy(
+                                        lastEventMessage = "${activeSeat.nickname} auto-rolled — no legal moves."
+                                    )
+                                }
+                                is RollOutcome.SingleLegalMove, is RollOutcome.MultipleLegalMoves -> {
+                                    working = rollOutcome.state.copy(
+                                        lastEventMessage = "Time up! Auto-rolled ${rollOutcome.state.rolledDice.joinToString(", ")} for ${activeSeat.nickname}."
+                                    )
+                                }
+                            }
+                        }
+                        working
+                    }
+
+                    TurnPhase.AWAITING_BOMB_PLACEMENT -> {
+                        val pending = state.powerUpState.pendingBombPlacement
+                        if (pending != null && pending.validTrackIndices.isNotEmpty()) {
+                            val square = botBrain.choosePendingBombSquare(
+                                state = state,
+                                ruleSet = ruleSet,
+                                validTrackIndices = pending.validTrackIndices,
+                                difficulty = BotDifficulty.HARD
+                            )
+                            engine.placePendingBomb(state, square).copy(
+                                lastEventMessage = "Time up! Auto-placed Bomb Trap for ${activeSeat.nickname}."
+                            )
+                        } else {
+                            engine.advanceTurnAfterSkip(state)
+                        }
+                    }
+
+                    TurnPhase.AWAITING_MOVE -> {
+                        if (state.legalMoves.isNotEmpty()) {
+                            val chosen = botBrain.chooseMove(state, ruleSet, state.legalMoves, BotDifficulty.HARD)
+                            val moveOutcome = engine.applyMove(state, chosen)
+                            movedColor = chosen.color.name
+                            movedTokenId = chosen.tokenId
+                            movedFrom = chosen.fromProgress
+                            movedTo = moveOutcome.move.toProgress
+                            moveOutcome.state.copy(
+                                lastEventMessage = "Time up! Auto-moved for ${activeSeat.nickname}."
+                            )
+                        } else {
+                            engine.advanceTurnAfterSkip(state)
+                        }
+                    }
+
+                    else -> engine.advanceTurnAfterSkip(state)
                 }
-                val finalState = synced.copy(lastEventMessage = summary)
-                val nextStatus = if (finalState.isMatchFinished) RoomStatus.FINISHED else RoomStatus.PLAYING
+
+                // Seat stays human-controlled — never set botTakeover on timeout!
+                val synced = syncGameStateWithSeats(nextState, room.seats)
+                val nextStatus = if (synced.isMatchFinished) RoomStatus.FINISHED else RoomStatus.PLAYING
 
                 tx.update(
                     ref,
                     mapOf(
-                        "seats" to updatedSeats.map { it.toFirestoreMap() },
                         "status" to nextStatus.name,
+                        "rollSeq" to nextRollSeq,
                         "turnSeq" to room.turnSeq + 1,
-                        "lastActionType" to if (triggeredTakeover) OnlineActionType.BOT_TAKEOVER.name else OnlineActionType.TIMEOUT.name,
-                        "lastActionSummary" to summary.take(180),
-                        "lastMovedColor" to "",
-                        "lastMovedTokenId" to -1,
-                        "lastMovedFromProgress" to -1,
-                        "lastMovedToProgress" to -1,
-                        "gameStateMap" to GameStateFirestoreMapper.toFirestoreMap(finalState),
+                        "lastActionType" to OnlineActionType.TIMEOUT.name,
+                        "lastActionSummary" to synced.lastEventMessage.take(180),
+                        "lastMovedColor" to movedColor,
+                        "lastMovedTokenId" to movedTokenId,
+                        "lastMovedFromProgress" to movedFrom,
+                        "lastMovedToProgress" to movedTo,
+                        "gameStateMap" to GameStateFirestoreMapper.toFirestoreMap(synced),
                         "turnStartedAt" to FieldValue.serverTimestamp(),
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
@@ -950,9 +1009,6 @@ class OnlineRoomRepository(
         }
     }
 
-    /**
-     * Handles Timed-mode match clock expiry atomically on the server document.
-     */
     suspend fun submitTimedClockExpired(
         roomCode: String,
         actorUid: String,
@@ -968,8 +1024,8 @@ class OnlineRoomRepository(
                 val state = room.gameState ?: return@runTransaction
                 if (state.isMatchFinished) return@runTransaction
 
-                val engine = LudoEngine(RuleSetRegistry.forMode(room.mode))
-                val expired = engine.handleTimedClockExpired(state)
+                val engine = LudoEngine(RuleSetRegistry.forMode(room.mode, room.matchFormat))
+                val expired = engine.tickTimedClock(state, state.timedRemainingSeconds.coerceAtLeast(1))
                 tx.update(
                     ref,
                     mapOf(
@@ -992,8 +1048,8 @@ class OnlineRoomRepository(
     }
 
     /**
-     * Updates the local player's heartbeat, restores their seat immediately if they reconnected
-     * after a bot takeover, and switches any other player disconnected >60s to Medium bot takeover.
+     * Updates the local player's heartbeat and marks them connected.
+     * Never forces bot takeover on idle/timeout — players retain control of their seat.
      */
     suspend fun sendHeartbeatAndSyncPresence(roomCode: String, uid: String): Result<Unit> {
         val code = roomCode.trim().uppercase()
@@ -1005,34 +1061,21 @@ class OnlineRoomRepository(
 
                 val nowMs = System.currentTimeMillis()
                 var reconnectedName: String? = null
-                var disconnectedName: String? = null
                 var changed = false
 
                 val updatedSeats = room.seats.map { seat ->
-                    when {
-                        seat.uid == uid -> {
-                            val wasTakenOver = seat.botTakeover || !seat.connected
-                            if (wasTakenOver) reconnectedName = seat.nickname
-                            changed = true
-                            seat.copy(
-                                connected = true,
-                                botTakeover = false,
-                                consecutiveMisses = 0,
-                                lastHeartbeatMs = nowMs
-                            )
-                        }
-                        seat.controllerType == SeatControl.HUMAN &&
-                            !seat.botTakeover &&
-                            seat.lastHeartbeatMs > 0L &&
-                            (nowMs - seat.lastHeartbeatMs) > DISCONNECT_TAKEOVER_MS -> {
-                            disconnectedName = seat.nickname
-                            changed = true
-                            seat.copy(
-                                connected = false,
-                                botTakeover = true
-                            )
-                        }
-                        else -> seat
+                    if (seat.uid == uid) {
+                        val wasDisconnected = seat.botTakeover || !seat.connected
+                        if (wasDisconnected) reconnectedName = seat.nickname
+                        changed = true
+                        seat.copy(
+                            connected = true,
+                            botTakeover = false,
+                            consecutiveMisses = 0,
+                            lastHeartbeatMs = nowMs
+                        )
+                    } else {
+                        seat
                     }
                 }
 
@@ -1044,21 +1087,13 @@ class OnlineRoomRepository(
                 )
 
                 val state = room.gameState
-                if (state != null && (reconnectedName != null || disconnectedName != null)) {
+                if (state != null && reconnectedName != null) {
                     val synced = syncGameStateWithSeats(state, updatedSeats)
-                    val summary = when {
-                        reconnectedName != null -> "$reconnectedName reconnected and reclaimed their seat!"
-                        disconnectedName != null -> "$disconnectedName disconnected (60s) — Medium Bot took over!"
-                        else -> synced.lastEventMessage
-                    }
+                    val summary = "$reconnectedName reconnected!"
                     updates["gameStateMap"] = GameStateFirestoreMapper.toFirestoreMap(
                         synced.copy(lastEventMessage = summary)
                     )
-                    updates["lastActionType"] = if (reconnectedName != null) {
-                        OnlineActionType.RECONNECT.name
-                    } else {
-                        OnlineActionType.BOT_TAKEOVER.name
-                    }
+                    updates["lastActionType"] = OnlineActionType.RECONNECT.name
                     updates["lastActionSummary"] = summary.take(180)
                 }
 
@@ -1074,8 +1109,8 @@ class OnlineRoomRepository(
     }
 
     /**
-     * Executes the next bot step (pre-roll power-up, roll, or move) when the active seat
-     * is a Bot or Bot-Takeover seat and the caller is the deterministic bot coordinator.
+     * Executes the next bot step (roll, bomb placement, or move) when the active seat
+     * is a Bot and the caller is the deterministic bot coordinator.
      */
     suspend fun executeBotStep(
         roomCode: String,
@@ -1100,29 +1135,32 @@ class OnlineRoomRepository(
         val activeSeat = room.seatForColor(state.activePlayer.color) ?: return Result.success(Unit)
         if (!activeSeat.isEffectiveBot) return Result.success(Unit)
 
-        val ruleSet = RuleSetRegistry.forMode(room.mode)
+        val ruleSet = RuleSetRegistry.forMode(room.mode, room.matchFormat)
         return when (state.phase) {
             TurnPhase.AWAITING_ROLL -> {
-                if (ruleSet.powerUpsEnabled && state.activePlayer.heldPowerUps.isNotEmpty()) {
-                    val powerUpAction = botBrain.choosePowerUpBeforeRoll(
-                        state = state,
-                        ruleSet = ruleSet,
-                        difficulty = activeSeat.effectiveBotDifficulty
-                    )
-                    if (powerUpAction != null) {
-                        return submitPowerUpAction(
-                            roomCode = code,
-                            actorUid = coordinatorUid,
-                            expectedTurnSeq = expectedTurnSeq,
-                            action = powerUpAction,
-                            asBotCoordinator = true
-                        )
-                    }
-                }
                 submitDiceRoll(
                     roomCode = code,
                     actorUid = coordinatorUid,
                     expectedTurnSeq = expectedTurnSeq,
+                    asBotCoordinator = true
+                )
+            }
+
+            TurnPhase.AWAITING_BOMB_PLACEMENT -> {
+                val pending = state.powerUpState.pendingBombPlacement
+                    ?: return Result.success(Unit)
+                if (pending.validTrackIndices.isEmpty()) return Result.success(Unit)
+                val square = botBrain.choosePendingBombSquare(
+                    state = state,
+                    ruleSet = ruleSet,
+                    validTrackIndices = pending.validTrackIndices,
+                    difficulty = activeSeat.effectiveBotDifficulty
+                )
+                submitBombPlacement(
+                    roomCode = code,
+                    actorUid = coordinatorUid,
+                    expectedTurnSeq = expectedTurnSeq,
+                    trackIndex = square,
                     asBotCoordinator = true
                 )
             }
@@ -1154,10 +1192,6 @@ class OnlineRoomRepository(
         }
     }
 
-    /**
-     * Post-game unanimous Rematch vote. Automatically starts a fresh match as soon as
-     * every human player still in `memberUids` has voted Rematch.
-     */
     suspend fun voteRematch(roomCode: String, uid: String): Result<Unit> {
         val code = roomCode.trim().uppercase()
         val ref = roomsCol.document(code)
@@ -1205,6 +1239,8 @@ class OnlineRoomRepository(
                     val freshState = createAuthoritativeGameState(
                         seats = resetSeats,
                         mode = room.mode,
+                        matchFormat = room.matchFormat,
+                        turnTimerSeconds = room.turnTimerSeconds,
                         timedDurationSeconds = room.timedDurationSeconds,
                         seed = newSeed
                     )
@@ -1300,15 +1336,23 @@ class OnlineRoomRepository(
     private fun createAuthoritativeGameState(
         seats: List<OnlineRoomSeat>,
         mode: GameModeId,
+        matchFormat: MatchFormat,
+        turnTimerSeconds: Int,
         timedDurationSeconds: Int,
         seed: Long
     ): GameState {
         val setups = seats.map { it.toPlayerSetup() }
         val engine = LudoEngine(
-            ruleSet = RuleSetRegistry.forMode(mode),
+            ruleSet = RuleSetRegistry.forMode(mode, matchFormat),
             eventRandom = Random(seed)
         )
-        return engine.createGame(setups, mode, timedDurationSeconds)
+        return engine.createGame(
+            playerSetups = setups,
+            mode = mode,
+            matchFormat = matchFormat,
+            timedDurationSeconds = timedDurationSeconds,
+            turnTimerSeconds = turnTimerSeconds
+        )
     }
 
     private fun syncGameStateWithSeats(state: GameState, seats: List<OnlineRoomSeat>): GameState {
@@ -1326,7 +1370,13 @@ class OnlineRoomRepository(
     private fun parseRoom(doc: DocumentSnapshot): OnlineRoom? {
         if (!doc.exists()) return null
         val est = DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-        val mode = GameModeId.entries.firstOrNull { it.name == doc.getString("mode") } ?: GameModeId.CLASSIC
+        val (mode, legacyFormat) = GameModeId.fromLegacyName(doc.getString("mode"))
+        val targetPlayerCount = (doc.getLong("targetPlayerCount") ?: 2L).toInt()
+        val matchFormat = legacyFormat ?: MatchFormat.fromRaw(
+            raw = doc.getString("matchFormat"),
+            fallbackPlayerCount = targetPlayerCount
+        )
+        val turnTimerSeconds = (doc.getLong("turnTimerSeconds") ?: TurnTimerOption.DEFAULT_SECONDS.toLong()).toInt()
         val memberUids = (doc.get("memberUids") as? List<*>).orEmpty().mapNotNull { it as? String }
         val seats = (doc.get("seats") as? List<*>).orEmpty()
             .mapNotNull { (it as? Map<*, *>)?.let(OnlineRoomSeat::fromFirestoreMap) }
@@ -1338,7 +1388,9 @@ class OnlineRoomRepository(
             roomCode = doc.getString("roomCode") ?: doc.id,
             hostUid = doc.getString("hostUid").orEmpty(),
             mode = mode,
-            targetPlayerCount = (doc.getLong("targetPlayerCount") ?: 2L).toInt(),
+            matchFormat = matchFormat,
+            turnTimerSeconds = turnTimerSeconds,
+            targetPlayerCount = targetPlayerCount,
             timedDurationSeconds = (doc.getLong("timedDurationSeconds") ?: 300L).toInt(),
             status = RoomStatus.fromRaw(doc.getString("status")),
             publicMatchmaking = doc.getBoolean("publicMatchmaking") ?: false,
@@ -1358,9 +1410,5 @@ class OnlineRoomRepository(
             createdAt = doc.getTimestamp("createdAt", est) ?: Timestamp.now(),
             updatedAt = doc.getTimestamp("updatedAt", est) ?: Timestamp.now()
         )
-    }
-
-    companion object {
-        const val DISCONNECT_TAKEOVER_MS = 60_000L
     }
 }

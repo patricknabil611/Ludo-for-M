@@ -42,7 +42,6 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
@@ -52,17 +51,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.engine.PlayerColor
-import com.example.ui.theme.InkDark
-import com.example.ui.theme.InkMuted
-import com.example.ui.theme.MintGreen
-import com.example.ui.theme.MintGreenDark
-import com.example.ui.theme.OutlineSoft
-import com.example.ui.theme.palette
+import com.example.ui.theme.LocalLudoTheme
+import com.example.ui.theme.ludoShadow
 
 /**
- * Floating die-number selector popup shown over the board after rolling two dice with
- * multiple playable step choices. Selecting a die updates the active step count and
- * dismisses the popup immediately so the entire board stays unobstructed.
+ * Floating die-number selector popup themed via [LocalLudoTheme].
  */
 @Composable
 fun DieStepChoicePopup(
@@ -77,7 +70,8 @@ fun DieStepChoicePopup(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val palette = activeColor.palette()
+    val theme = LocalLudoTheme.current
+    val playerColor = theme.playerColor(activeColor)
 
     AnimatedVisibility(
         visible = visible,
@@ -97,7 +91,7 @@ fun DieStepChoicePopup(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(InkDark.copy(alpha = 0.30f))
+                .background(Color.Black.copy(alpha = 0.36f))
                 .clickable(
                     interactionSource = scrimInteraction,
                     indication = null,
@@ -110,25 +104,20 @@ fun DieStepChoicePopup(
                 modifier = Modifier
                     .widthIn(max = 360.dp)
                     .fillMaxWidth()
+                    .ludoShadow(theme.cardShadow, 24.dp)
                     .clickable(
                         interactionSource = cardInteraction,
                         indication = null,
                         onClick = {}
                     )
                     .testTag("die_step_choice_popup"),
-                shape = RoundedCornerShape(28.dp),
-                color = Color.White,
-                border = BorderStroke(3.dp, palette.primary),
-                shadowElevation = 18.dp
+                shape = RoundedCornerShape(24.dp),
+                color = theme.surface,
+                border = BorderStroke(2.dp, playerColor)
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(
-                            Brush.verticalGradient(
-                                colors = listOf(palette.light.copy(alpha = 0.65f), Color.White)
-                            )
-                        )
                         .padding(start = 18.dp, end = 12.dp, top = 12.dp, bottom = 18.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
@@ -140,13 +129,13 @@ fun DieStepChoicePopup(
                             Text(
                                 text = stringResource(R.string.die_choice_popup_title),
                                 style = MaterialTheme.typography.titleLarge,
-                                color = InkDark,
+                                color = theme.surfaceText,
                                 fontWeight = FontWeight.ExtraBold
                             )
                             Text(
-                                text = "$playerName • ${stringResource(R.string.die_choice_popup_subtitle)}",
+                                text = "$playerName · ${stringResource(R.string.die_choice_popup_subtitle)}",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = InkMuted
+                                color = theme.surfaceMutedText
                             )
                         }
                         IconButton(
@@ -158,14 +147,13 @@ fun DieStepChoicePopup(
                             Icon(
                                 imageVector = Icons.Filled.Close,
                                 contentDescription = stringResource(R.string.cd_close_die_choice),
-                                tint = InkMuted
+                                tint = theme.surfaceMutedText
                             )
                         }
                     }
 
                     Spacer(Modifier.height(12.dp))
 
-                    // Resolve remaining/spent status per rolled die slot (handles doubles accurately)
                     val remainingCounts = remainingDice.groupingBy { it }.eachCount().toMutableMap()
                     val slotRemaining = rolledDice.map { value ->
                         val left = remainingCounts[value] ?: 0
@@ -222,24 +210,25 @@ private fun DieChoiceOptionCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val palette = activeColor.palette()
+    val theme = LocalLudoTheme.current
+    val playerColor = theme.playerColor(activeColor)
     val containerColor = when {
-        !isRemaining -> Color(0xFFF2F4F7)
-        isSelected -> palette.primary
-        isPlayable -> palette.light
-        else -> Color(0xFFF5F5F5)
+        !isRemaining -> theme.surfaceVariant
+        isSelected -> theme.primaryActionBg
+        isPlayable -> theme.surface
+        else -> theme.surfaceVariant
     }
     val borderColor = when {
-        !isRemaining -> OutlineSoft
-        isSelected -> palette.dark
-        isPlayable -> palette.primary
-        else -> OutlineSoft
+        !isRemaining -> theme.chipLine
+        isSelected -> theme.primaryActionBg
+        isPlayable -> playerColor
+        else -> theme.chipLine
     }
     val labelColor = when {
-        !isRemaining -> InkMuted
-        isSelected -> palette.onPrimary
-        isPlayable -> InkDark
-        else -> InkMuted
+        !isRemaining -> theme.surfaceMutedText
+        isSelected -> theme.onPrimaryAction
+        isPlayable -> theme.surfaceText
+        else -> theme.surfaceMutedText
     }
 
     Surface(
@@ -248,10 +237,9 @@ private fun DieChoiceOptionCard(
         modifier = modifier
             .heightIn(min = 122.dp)
             .alpha(if (isPlayable) 1f else 0.56f),
-        shape = RoundedCornerShape(22.dp),
+        shape = RoundedCornerShape(18.dp),
         color = containerColor,
-        border = BorderStroke(if (isSelected) 3.dp else 2.dp, borderColor),
-        shadowElevation = if (isSelected) 8.dp else if (isPlayable) 3.dp else 0.dp
+        border = BorderStroke(if (isSelected) 2.5.dp else 1.5.dp, borderColor)
     ) {
         Column(
             modifier = Modifier
@@ -263,25 +251,25 @@ private fun DieChoiceOptionCard(
             Box(contentAlignment = Alignment.Center) {
                 DieFaceGraphic(
                     value = dieValue,
-                    accentColor = palette.primary,
-                    darkColor = palette.dark,
-                    modifier = Modifier.size(56.dp)
+                    dieFace = theme.dieFace,
+                    pipColor = theme.pip,
+                    borderColor = theme.chipLine,
+                    modifier = Modifier.size(52.dp)
                 )
                 if (!isRemaining) {
                     Surface(
                         shape = CircleShape,
-                        color = MintGreen,
-                        border = BorderStroke(1.5.dp, Color.White),
+                        color = theme.green,
                         modifier = Modifier
                             .align(Alignment.TopEnd)
-                            .size(22.dp)
+                            .size(20.dp)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
                                 imageVector = Icons.Filled.Check,
                                 contentDescription = stringResource(R.string.die_choice_used_label),
-                                tint = Color.White,
-                                modifier = Modifier.size(14.dp)
+                                tint = theme.contrastingTextOn(theme.green),
+                                modifier = Modifier.size(13.dp)
                             )
                         }
                     }
@@ -292,7 +280,7 @@ private fun DieChoiceOptionCard(
                 text = if (dieValue == 1) "1 Step" else "$dieValue Steps",
                 style = MaterialTheme.typography.titleMedium,
                 color = labelColor,
-                fontWeight = FontWeight.ExtraBold,
+                fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center
             )
 
@@ -300,14 +288,14 @@ private fun DieChoiceOptionCard(
                 Text(
                     text = stringResource(R.string.die_choice_used_label),
                     style = MaterialTheme.typography.labelSmall,
-                    color = MintGreenDark,
+                    color = theme.accessibleAccentOn(theme.green, containerColor),
                     fontWeight = FontWeight.Bold
                 )
             } else if (!isPlayable) {
                 Text(
                     text = stringResource(R.string.die_choice_no_moves_label),
                     style = MaterialTheme.typography.labelSmall,
-                    color = InkMuted,
+                    color = theme.surfaceMutedText,
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -318,8 +306,9 @@ private fun DieChoiceOptionCard(
 @Composable
 private fun DieFaceGraphic(
     value: Int,
-    accentColor: Color,
-    darkColor: Color,
+    dieFace: Color,
+    pipColor: Color,
+    borderColor: Color,
     modifier: Modifier = Modifier
 ) {
     val safeVal = value.coerceIn(1, 6)
@@ -328,38 +317,27 @@ private fun DieFaceGraphic(
         val h = size.height
         val corner = w * 0.24f
 
-        // Drop shadow lip
         drawRoundRect(
-            color = darkColor.copy(alpha = 0.25f),
-            topLeft = Offset(w * 0.04f, h * 0.08f),
-            size = Size(w * 0.92f, h * 0.92f),
-            cornerRadius = CornerRadius(corner, corner)
-        )
-        // Ivory glossy die body
-        drawRoundRect(
-            brush = Brush.verticalGradient(
-                colors = listOf(Color(0xFFFFFFFF), Color(0xFFF3F6FB))
-            ),
-            topLeft = Offset(w * 0.04f, h * 0.02f),
+            color = dieFace,
+            topLeft = Offset(w * 0.04f, h * 0.04f),
             size = Size(w * 0.92f, h * 0.92f),
             cornerRadius = CornerRadius(corner, corner)
         )
         drawRoundRect(
-            color = accentColor.copy(alpha = 0.65f),
-            topLeft = Offset(w * 0.04f, h * 0.02f),
+            color = borderColor,
+            topLeft = Offset(w * 0.04f, h * 0.04f),
             size = Size(w * 0.92f, h * 0.92f),
             cornerRadius = CornerRadius(corner, corner),
-            style = Stroke(width = (w * 0.045f).coerceAtLeast(1.8f))
+            style = Stroke(width = 1.5.dp.toPx())
         )
 
-        val pipColor = if (safeVal == 1 || safeVal == 6) accentColor else InkDark
-        val pipR = if (safeVal == 1) w * 0.115f else w * 0.082f
+        val pipR = w * 0.082f
         val left = w * 0.28f
         val mid = w * 0.50f
         val right = w * 0.72f
-        val top = h * 0.26f
-        val center = h * 0.48f
-        val bottom = h * 0.70f
+        val top = h * 0.28f
+        val center = h * 0.50f
+        val bottom = h * 0.72f
 
         val pips = when (safeVal) {
             1 -> listOf(Offset(mid, center))
@@ -378,11 +356,7 @@ private fun DieFaceGraphic(
             )
         }
         pips.forEach { pos ->
-            drawCircle(
-                color = pipColor,
-                radius = pipR,
-                center = pos
-            )
+            drawCircle(color = pipColor, radius = pipR, center = pos)
         }
     }
 }
